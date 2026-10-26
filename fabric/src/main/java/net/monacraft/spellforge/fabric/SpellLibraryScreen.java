@@ -34,6 +34,7 @@ final class SpellLibraryScreen extends Screen {
     private Component status;
     private int statusColor;
     private Button editButton;
+    private Button toggleButton;
     private Button deleteButton;
 
     SpellLibraryScreen(Screen parent, CircuitLibrary library, String token) {
@@ -78,18 +79,20 @@ final class SpellLibraryScreen extends Screen {
 
         int y = top + panelHeight() - 31;
         int gap = 5;
-        int buttonWidth = (panelWidth() - 48 - gap * 4) / 5;
+        int buttonWidth = (panelWidth() - 48 - gap * 5) / 6;
         int x = left + 24;
         addRenderableWidget(Button.builder(Component.literal("新しい魔術"), ignored -> createCircuit())
                 .bounds(x, y, buttonWidth, 20).build());
         editButton = addRenderableWidget(Button.builder(Component.literal("再編集"), ignored -> editSelected())
                 .bounds(x + (buttonWidth + gap), y, buttonWidth, 20).build());
-        deleteButton = addRenderableWidget(Button.builder(Component.literal("削除"), ignored -> deleteSelected())
+        toggleButton = addRenderableWidget(Button.builder(Component.literal("有効化"), ignored -> toggleSelected())
                 .bounds(x + (buttonWidth + gap) * 2, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("更新"), ignored -> requestRefresh())
+        deleteButton = addRenderableWidget(Button.builder(Component.literal("削除"), ignored -> deleteSelected())
                 .bounds(x + (buttonWidth + gap) * 3, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("閉じる"), ignored -> onClose())
+        addRenderableWidget(Button.builder(Component.literal("更新"), ignored -> requestRefresh())
                 .bounds(x + (buttonWidth + gap) * 4, y, buttonWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("閉じる"), ignored -> onClose())
+                .bounds(x + (buttonWidth + gap) * 5, y, buttonWidth, 20).build());
         refreshSelectionState();
     }
 
@@ -113,15 +116,20 @@ final class SpellLibraryScreen extends Screen {
         deleteArmed = null;
         CircuitSummary summary = selectedSummary();
         status = Component.literal(summary == null ? "魔術を選択してください"
-                : summary.name() + " — ノード " + summary.nodeCount() + ", 配線 " + summary.edgeCount()
+                : (summary.active() ? "有効: " : "無効: ") + summary.name() + " — ノード " + summary.nodeCount() + ", 配線 " + summary.edgeCount()
                 + ", Revision " + summary.revision());
-        statusColor = TEXT_PRIMARY;
+        statusColor = summary != null && summary.active() ? SUCCESS : TEXT_PRIMARY;
         refreshSelectionState();
     }
 
     private void refreshSelectionState() {
         boolean hasSelection = selectedSummary() != null;
         if (editButton != null) editButton.active = hasSelection;
+        if (toggleButton != null) {
+            toggleButton.active = hasSelection;
+            CircuitSummary summary = selectedSummary();
+            toggleButton.setMessage(Component.literal(summary != null && summary.active() ? "無効化" : "有効化"));
+        }
         if (deleteButton != null) {
             deleteButton.active = hasSelection;
             deleteButton.setMessage(Component.literal(deleteArmed != null ? "削除を確定" : "削除"));
@@ -140,6 +148,14 @@ final class SpellLibraryScreen extends Screen {
         if (summary == null) return;
         send(SpellForgeProtocol.Type.CIRCUIT_OPEN_REQ, summary.circuitId());
         status = Component.literal("「" + summary.name() + "」を開いています…");
+        statusColor = WARNING;
+    }
+
+    private void toggleSelected() {
+        CircuitSummary summary = selectedSummary();
+        if (summary == null) return;
+        send(SpellForgeProtocol.Type.CIRCUIT_TOGGLE_REQ, summary.circuitId());
+        status = Component.literal("「" + summary.name() + "」を" + (summary.active() ? "無効化" : "有効化") + "しています…");
         statusColor = WARNING;
     }
 
@@ -207,7 +223,7 @@ final class SpellLibraryScreen extends Screen {
     }
 
     private Component rowLabel(CircuitSummary summary, boolean selectedRow) {
-        return Component.literal((selectedRow ? "▶ " : "  ") + summary.name()
+        return Component.literal((selectedRow ? "▶ " : "  ") + (summary.active() ? "[ON] " : "[OFF] ") + summary.name()
                 + "   [ノード " + summary.nodeCount() + " / Rev." + summary.revision() + "]");
     }
 

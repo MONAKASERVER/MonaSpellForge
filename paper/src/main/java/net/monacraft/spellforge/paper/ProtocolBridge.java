@@ -34,6 +34,7 @@ final class ProtocolBridge implements PluginMessageListener {
     private final FragmentService fragments;
     private final SpellDatabase database;
     private final CircuitEmbeddingService embedding;
+    private final DefaultSpellService spells;
     private final Gson gson = new GsonBuilder()
             .registerTypeAdapter(Instant.class, (com.google.gson.JsonSerializer<Instant>)
                     (value, type, context) -> new com.google.gson.JsonPrimitive(value.toEpochMilli()))
@@ -43,12 +44,14 @@ final class ProtocolBridge implements PluginMessageListener {
     private final Map<UUID, String> sessions = new ConcurrentHashMap<>();
     private final Map<UUID, Rate> rates = new ConcurrentHashMap<>();
 
-    ProtocolBridge(Plugin plugin, CircuitService circuits, FragmentService fragments, CircuitEmbeddingService embedding, SpellDatabase database) {
+    ProtocolBridge(Plugin plugin, CircuitService circuits, FragmentService fragments, CircuitEmbeddingService embedding,
+                   SpellDatabase database, DefaultSpellService spells) {
         this.plugin = plugin;
         this.circuits = circuits;
         this.fragments = fragments;
         this.embedding = embedding;
         this.database = database;
+        this.spells = spells;
     }
 
     boolean openModEditor(Player player) {
@@ -110,6 +113,23 @@ final class ProtocolBridge implements PluginMessageListener {
                 sendLibrary(player, token, "「" + circuit.name() + "」を削除しました");
                 return;
             }
+            if (frame.type() == SpellForgeProtocol.Type.CIRCUIT_TOGGLE_REQ) {
+                Circuit circuit = ownedCircuit(player, frame.circuitId());
+                if (circuit == null) {
+                    error(player, frame, "CIRCUIT_NOT_FOUND");
+                    return;
+                }
+                boolean currentlyActive = circuits.getActiveCircuit(player.getUniqueId())
+                        .map(active -> active.circuitId().equals(circuit.circuitId())).orElse(false);
+                boolean enable = !currentlyActive;
+                if (!circuits.setActive(circuit.circuitId(), player.getUniqueId(), enable)) {
+                    error(player, frame, "CIRCUIT_NOT_FOUND");
+                    return;
+                }
+                spells.cancel(player.getUniqueId());
+                sendLibrary(player, token, "「" + circuit.name() + "」を" + (enable ? "有効化" : "無効化") + "しました");
+                return;
+            }
 
             if (frame.type() == SpellForgeProtocol.Type.VALIDATE_REQ || frame.type() == SpellForgeProtocol.Type.SAVE_REQ) {
                 Circuit circuit = gson.fromJson(frame.payload(), Circuit.class);
@@ -149,9 +169,10 @@ final class ProtocolBridge implements PluginMessageListener {
     }
 
     private void sendLibrary(Player player, String token, String message) {
+        UUID activeId = circuits.getActiveCircuit(player.getUniqueId()).map(Circuit::circuitId).orElse(null);
         List<CircuitSummary> summaries = circuits.getCircuits(player.getUniqueId()).stream()
                 .map(circuit -> new CircuitSummary(circuit.circuitId(), circuit.name(), circuit.revision(),
-                        circuit.nodes().size(), circuit.edges().size(), circuit.updatedAt()))
+                        circuit.nodes().size(), circuit.edges().size(), circuit.circuitId().equals(activeId), circuit.updatedAt()))
                 .toList();
         CircuitLibrary library = new CircuitLibrary(summaries, message);
         send(player, new SpellForgeProtocol.Frame(SpellForgeProtocol.Type.CIRCUIT_LIBRARY,

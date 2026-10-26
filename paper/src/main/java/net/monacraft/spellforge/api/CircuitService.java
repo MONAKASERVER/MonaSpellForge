@@ -14,5 +14,7 @@ public interface CircuitService {
     CompilationResult compile(Circuit circuit);
     SaveResult save(Circuit circuit, long expectedRevision);
     boolean delete(UUID circuitId, UUID ownerId);
+    default Optional<Circuit> getActiveCircuit(UUID ownerId) { return Optional.empty(); }
+    default boolean setActive(UUID circuitId, UUID ownerId, boolean active) { return false; }
     record SaveResult(boolean saved, boolean conflict, String message, Circuit circuit) {}
 }

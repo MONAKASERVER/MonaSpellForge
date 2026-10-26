@@ -78,7 +78,8 @@ public final class SpellModel {
     }
 
     /** Compact metadata used by the spell library. Circuit contents are sent only after selection. */
-    public record CircuitSummary(UUID circuitId, String name, long revision, int nodeCount, int edgeCount, Instant updatedAt) {
+    public record CircuitSummary(UUID circuitId, String name, long revision, int nodeCount, int edgeCount,
+                                 boolean active, Instant updatedAt) {
         public CircuitSummary {
             Objects.requireNonNull(circuitId);
             name = Objects.requireNonNullElse(name, "名称未設定の魔術");

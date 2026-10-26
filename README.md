@@ -13,8 +13,8 @@ $env:JAVA_HOME='C:\path\to\jdk-25'
 
 成果物:
 
-- `paper/build/libs/MonaSpellForge-Paper-1.4.0.jar`
-- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.4.0.jar`
+- `paper/build/libs/MonaSpellForge-Paper-1.5.0.jar`
+- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.5.0.jar`
 
 Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアントの`mods`へ配置します。ModがないJava版・統合版は54スロットのサーバーGUIを利用できます。
 
@@ -22,7 +22,7 @@ Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアント
 
 [GitHub Releases](https://github.com/MONAKASERVER/MonaSpellForge/releases)から、利用中のMinecraftバージョンに対応する`MonaSpellForge-Fabric-*.jar`をダウンロードし、クライアントの`mods`フォルダへ配置してください。
 
-v1.4.0の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
+v1.5.0の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
 
 ## Fabric回路エディター操作
 
@@ -48,5 +48,7 @@ v1.4.0の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25�
 3. プレイヤーが `/msf open` を実行し、Mod画面の「所持ノード」または中央5×5へ配置します。
 4. 「検証」後、「保存して有効化」を押します。
 5. 設定したトリガー、または `/msf spell cast` で発動します。
+
+保存済み魔術は `/msf open` の一覧から有効・無効を切り替えられます。Fabric版は専用ボタン、Modなし版はShift＋左クリックで操作します。有効にできる魔術は同時に1件です。
 
 ガチャ機能は含みません。外部プラグインは Bukkit Services API の `FragmentService` を使って欠片を正規発行してください。

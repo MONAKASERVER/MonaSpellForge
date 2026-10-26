@@ -140,6 +140,50 @@ final class SpellDatabase implements AutoCloseable {
         } catch (SQLException error) { throw new IllegalStateException(error); }
     }
 
+    synchronized boolean setCircuitActive(UUID circuitId, UUID ownerId, boolean active) {
+        try {
+            connection.setAutoCommit(false);
+            try {
+                boolean exists;
+                try (PreparedStatement select = connection.prepareStatement(
+                        "SELECT 1 FROM circuits WHERE circuit_uuid=? AND owner_uuid=?")) {
+                    select.setString(1, circuitId.toString());
+                    select.setString(2, ownerId.toString());
+                    try (ResultSet result = select.executeQuery()) { exists = result.next(); }
+                }
+                if (!exists) {
+                    connection.rollback();
+                    return false;
+                }
+                if (active) {
+                    try (PreparedStatement clear = connection.prepareStatement("UPDATE circuits SET active=0 WHERE owner_uuid=?")) {
+                        clear.setString(1, ownerId.toString());
+                        clear.executeUpdate();
+                    }
+                }
+                try (PreparedStatement update = connection.prepareStatement(
+                        "UPDATE circuits SET active=? WHERE circuit_uuid=? AND owner_uuid=?")) {
+                    update.setInt(1, active ? 1 : 0);
+                    update.setString(2, circuitId.toString());
+                    update.setString(3, ownerId.toString());
+                    if (update.executeUpdate() != 1) {
+                        connection.rollback();
+                        return false;
+                    }
+                }
+                connection.commit();
+                return true;
+            } catch (RuntimeException | SQLException error) {
+                connection.rollback();
+                throw error;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException error) {
+            throw new IllegalStateException(error);
+        }
+    }
+
     synchronized Circuit save(Circuit circuit, long expectedRevision) {
         try {
             connection.setAutoCommit(false);
@@ -333,9 +377,8 @@ final class SpellDatabase implements AutoCloseable {
         try {
             connection.setAutoCommit(false);
             try {
-                boolean active;
                 try (PreparedStatement select = connection.prepareStatement(
-                        "SELECT active FROM circuits WHERE circuit_uuid=? AND owner_uuid=?")) {
+                        "SELECT 1 FROM circuits WHERE circuit_uuid=? AND owner_uuid=?")) {
                     select.setString(1, circuitId.toString());
                     select.setString(2, ownerId.toString());
                     try (ResultSet result = select.executeQuery()) {
@@ -343,7 +386,6 @@ final class SpellDatabase implements AutoCloseable {
                             connection.rollback();
                             return false;
                         }
-                        active = result.getInt(1) != 0;
                     }
                 }
                 try (PreparedStatement delete = connection.prepareStatement(
@@ -353,15 +395,6 @@ final class SpellDatabase implements AutoCloseable {
                     if (delete.executeUpdate() != 1) {
                         connection.rollback();
                         return false;
-                    }
-                }
-                if (active) {
-                    try (PreparedStatement activate = connection.prepareStatement("""
-                            UPDATE circuits SET active=1 WHERE circuit_uuid=(
-                              SELECT circuit_uuid FROM circuits WHERE owner_uuid=? ORDER BY updated_at DESC LIMIT 1
-                            )""")) {
-                        activate.setString(1, ownerId.toString());
-                        activate.executeUpdate();
                     }
                 }
                 connection.commit();

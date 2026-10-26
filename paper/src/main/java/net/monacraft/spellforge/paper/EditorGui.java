@@ -42,6 +42,7 @@ final class EditorGui implements Listener {
 
     private void renderLibrary(Player player, int requestedPage) {
         List<Circuit> saved = circuits.getCircuits(player.getUniqueId());
+        UUID activeId = circuits.getActiveCircuit(player.getUniqueId()).map(Circuit::circuitId).orElse(null);
         int pages = Math.max(1, (saved.size() + 44) / 45);
         int page = Math.max(0, Math.min(requestedPage, pages - 1));
         LibraryHolder holder = new LibraryHolder(player.getUniqueId(), page);
@@ -57,15 +58,19 @@ final class EditorGui implements Listener {
             int index = page * 45 + slot;
             if (index >= saved.size()) break;
             Circuit circuit = saved.get(index);
+            boolean active = circuit.circuitId().equals(activeId);
             List<String> lore = new ArrayList<>(List.of(
+                    "状態: " + (active ? "有効" : "無効"),
                     "ノード: " + circuit.nodes().size() + "/25  配線: " + circuit.edges().size() + "/64",
                     "Revision: " + circuit.revision(),
                     "左クリック: 再編集",
+                    "Shift+左クリック: " + (active ? "無効化" : "有効化"),
                     "右クリック: 削除"));
             if (pending != null && pending.circuitId.equals(circuit.circuitId())) {
                 lore.add("もう一度右クリックで完全に削除");
             }
-            inventory.setItem(slot, item(Material.ENCHANTED_BOOK, circuit.name(), NamedTextColor.AQUA, lore));
+            inventory.setItem(slot, item(active ? Material.LIME_DYE : Material.GRAY_DYE,
+                    (active ? "[有効] " : "[無効] ") + circuit.name(), active ? NamedTextColor.GREEN : NamedTextColor.GRAY, lore));
         }
         inventory.setItem(45, item(Material.ARROW, "前のページ", NamedTextColor.YELLOW,
                 List.of((page + 1) + " / " + pages)));
@@ -169,6 +174,18 @@ final class EditorGui implements Listener {
         int index = holder.page * 45 + raw;
         if (index >= saved.size()) return;
         Circuit circuit = saved.get(index);
+        if (event.isShiftClick() && event.isLeftClick()) {
+            boolean active = circuits.getActiveCircuit(player.getUniqueId())
+                    .map(value -> value.circuitId().equals(circuit.circuitId())).orElse(false);
+            if (circuits.setActive(circuit.circuitId(), player.getUniqueId(), !active)) {
+                spells.cancel(player.getUniqueId());
+                player.sendMessage(Component.text("「" + circuit.name() + "」を" + (active ? "無効化" : "有効化") + "しました",
+                        active ? NamedTextColor.YELLOW : NamedTextColor.GREEN));
+            } else player.sendMessage(Component.text("魔術の状態を変更できませんでした", NamedTextColor.RED));
+            pendingDeletes.remove(player.getUniqueId());
+            renderLibrary(player, holder.page);
+            return;
+        }
         if (!event.isRightClick()) {
             pendingDeletes.remove(player.getUniqueId());
             openEditor(player, circuit);

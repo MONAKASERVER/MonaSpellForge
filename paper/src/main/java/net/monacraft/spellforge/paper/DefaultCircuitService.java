@@ -25,4 +25,6 @@ final class DefaultCircuitService implements CircuitService {
         catch (SpellDatabase.OptimisticConflict conflict) { return new SaveResult(false, true, "REVISION_CONFLICT:" + conflict.revision, circuit); }
     }
     @Override public boolean delete(UUID circuitId, UUID ownerId) { return database.deleteCircuit(circuitId, ownerId); }
+    @Override public Optional<Circuit> getActiveCircuit(UUID ownerId) { return database.activeCircuit(ownerId); }
+    @Override public boolean setActive(UUID circuitId, UUID ownerId, boolean active) { return database.setCircuitActive(circuitId, ownerId, active); }
 }

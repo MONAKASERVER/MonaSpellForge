@@ -24,7 +24,7 @@ class SpellDatabaseTest {
         }
     }
 
-    @Test void deletesOnlyOwnedCircuitAndPromotesNewestRemainingCircuit() throws Exception {
+    @Test void deletesOnlyOwnedCircuitAndLeavesSpellsDisabledWhenActiveCircuitIsDeleted() throws Exception {
         UUID owner = UUID.randomUUID();
         UUID stranger = UUID.randomUUID();
         try (SpellDatabase database = new SpellDatabase(temp.resolve("delete.sqlite"))) {
@@ -35,7 +35,24 @@ class SpellDatabaseTest {
             assertTrue(database.circuit(second.circuitId()).isPresent());
             assertTrue(database.deleteCircuit(second.circuitId(), owner));
             assertTrue(database.circuit(second.circuitId()).isEmpty());
+            assertTrue(database.activeCircuit(owner).isEmpty());
+        }
+    }
+
+    @Test void activeCircuitCanBeDisabledAndSwitchedExclusively() throws Exception {
+        UUID owner = UUID.randomUUID();
+        UUID stranger = UUID.randomUUID();
+        try (SpellDatabase database = new SpellDatabase(temp.resolve("active-toggle.sqlite"))) {
+            Circuit first = database.save(Circuit.empty(owner), 0);
+            Circuit second = database.save(Circuit.empty(owner), 0);
+            assertEquals(second.circuitId(), database.activeCircuit(owner).orElseThrow().circuitId());
+            assertFalse(database.setCircuitActive(first.circuitId(), stranger, true));
+            assertTrue(database.setCircuitActive(second.circuitId(), owner, false));
+            assertTrue(database.activeCircuit(owner).isEmpty());
+            assertTrue(database.setCircuitActive(first.circuitId(), owner, true));
             assertEquals(first.circuitId(), database.activeCircuit(owner).orElseThrow().circuitId());
+            assertTrue(database.setCircuitActive(second.circuitId(), owner, true));
+            assertEquals(second.circuitId(), database.activeCircuit(owner).orElseThrow().circuitId());
         }
     }
 
