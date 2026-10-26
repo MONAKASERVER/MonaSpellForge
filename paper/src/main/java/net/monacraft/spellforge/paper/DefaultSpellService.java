@@ -26,12 +26,14 @@ final class DefaultSpellService implements SpellService {
     private final CircuitCompiler compiler;
     private final ManaService mana;
     private final TickBudgetManager budgets;
+    private final SpellParticleRenderer particles;
     private final Map<UUID, Set<UUID>> active = new ConcurrentHashMap<>();
     private final Map<UUID, Set<BukkitTask>> scheduled = new ConcurrentHashMap<>();
     private final Map<String, Double> memory = new ConcurrentHashMap<>();
 
     DefaultSpellService(Plugin plugin, SpellDatabase database, CircuitCompiler compiler, ManaService mana, TickBudgetManager budgets) {
         this.plugin = plugin; this.database = database; this.compiler = compiler; this.mana = mana; this.budgets = budgets;
+        this.particles = new SpellParticleRenderer(plugin.getConfig());
     }
 
     CastResult castActive(Player player, String trigger) {
@@ -169,7 +171,7 @@ final class DefaultSpellService implements SpellService {
         if (node(spell, "COUNTER") != null || node(spell, "MEMORY_CORE") != null || node(spell, "RETURN_CIRCUIT") != null) {
             memory.merge(memoryKey, (double) Math.max(1, targets.size()), Double::sum);
         }
-        render(player, element, shape, range, radius);
+        particles.render(player, spell, element, shape, range, radius, power, targets);
         player.sendActionBar(Component.text("✦ " + element + " / " + shape + "  魔力 " + (int) mana.current(player), NamedTextColor.LIGHT_PURPLE));
     }
 
@@ -205,14 +207,6 @@ final class DefaultSpellService implements SpellService {
             case "HEAL" -> target.setHealth(Math.min(target.getMaxHealth(), target.getHealth() + damage));
             default -> target.damage(damage, caster);
         }
-    }
-
-    private void render(Player player, String element, String shape, double range, double radius) {
-        Particle particle = switch (element) { case "FIRE" -> Particle.FLAME; case "ICE", "WATER" -> Particle.SNOWFLAKE; case "WIND" -> Particle.CLOUD; case "POISON" -> Particle.WITCH; case "DARK" -> Particle.PORTAL; case "HEAL" -> Particle.HEART; default -> Particle.ENCHANT; };
-        Location at = player.getLocation().add(0, 1, 0);
-        int count = shape.equals("BURST") || shape.equals("RING") ? 60 : 24;
-        player.getWorld().spawnParticle(particle, at, count, radius / 3, 1, radius / 3, 0.03);
-        player.getWorld().playSound(at, Sound.BLOCK_AMETHYST_BLOCK_CHIME, 1f, 1.2f);
     }
 
     @Override public int cancel(UUID playerId) { Set<UUID> removed = active.remove(playerId);Set<BukkitTask> tasks=scheduled.remove(playerId);if(tasks!=null)tasks.forEach(BukkitTask::cancel);return removed == null ? 0 : removed.size(); }

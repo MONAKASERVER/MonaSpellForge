@@ -23,9 +23,10 @@ jobs:
         run: ./gradlew clean build
       - uses: actions/upload-artifact@v4
         with:
-          name: MonaSpellForge-Fabric-26.1.2
+          name: MonaSpellForge-26.1.2
           path: |
             fabric/build/libs/MonaSpellForge-Fabric-26.1.2-*.jar
             !fabric/build/libs/*-sources.jar
+            paper/build/libs/MonaSpellForge-Paper-*.jar
           if-no-files-found: error
 

@@ -16,6 +16,13 @@ runtime:
   minimum-tps: 17.0
   mana-capacity: 1000.0
   mana-regeneration-per-second: 10.0
+particles:
+  enabled: true
+  # 1回の実行に許可する最大粒子数。反復・周期実行では実行ごとに適用。
+  max-per-cast: 180
+  # TPS低下時は演出だけを縮小し、攻撃・効果判定には影響させない。
+  degraded-below-tps: 18.0
+  degraded-multiplier: 0.4
 equipment-mana:
   enabled: true
   # 防具4枠・メインハンド・オフハンドの青色Lore「MP: 数値」「MPS: 数値」を加算。
