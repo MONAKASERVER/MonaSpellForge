@@ -1,0 +1,78 @@
+schema-version: 2
+# Built-in defaults remain authoritative when a future override omits a field.
+fragments:
+  # Triggers (6)
+  RIGHT_CLICK: {category: TRIGGER, max-level: 3, rarity: UNCOMMON}
+  SNEAK: {category: TRIGGER, max-level: 3, rarity: UNCOMMON}
+  DAMAGE_TAKEN: {category: TRIGGER, max-level: 3, rarity: UNCOMMON}
+  LAND: {category: TRIGGER, max-level: 3, rarity: UNCOMMON}
+  PROJECTILE_HIT: {category: TRIGGER, max-level: 3, rarity: UNCOMMON}
+  KILL_CONFIRM: {category: TRIGGER, max-level: 3, rarity: UNCOMMON}
+  # Elements (12)
+  FIRE: {category: ELEMENT, max-level: 4, rarity: RARE}
+  ICE: {category: ELEMENT, max-level: 4, rarity: RARE}
+  WIND: {category: ELEMENT, max-level: 4, rarity: RARE}
+  EARTH: {category: ELEMENT, max-level: 4, rarity: RARE}
+  LIGHTNING: {category: ELEMENT, max-level: 4, rarity: RARE}
+  WATER: {category: ELEMENT, max-level: 4, rarity: RARE}
+  LIGHT: {category: ELEMENT, max-level: 4, rarity: RARE}
+  DARK: {category: ELEMENT, max-level: 4, rarity: RARE}
+  POISON: {category: ELEMENT, max-level: 4, rarity: RARE}
+  GRAVITY: {category: ELEMENT, max-level: 5, rarity: EPIC}
+  HEAL: {category: ELEMENT, max-level: 5, rarity: EPIC}
+  ARCANE: {category: ELEMENT, max-level: 5, rarity: EPIC}
+  # Shapes (8)
+  PROJECTILE: {category: SHAPE, max-level: 5, rarity: EPIC}
+  BEAM: {category: SHAPE, max-level: 4, rarity: RARE}
+  WAVE: {category: SHAPE, max-level: 4, rarity: RARE}
+  BURST: {category: SHAPE, max-level: 5, rarity: EPIC}
+  BARRIER: {category: SHAPE, max-level: 4, rarity: RARE}
+  RING: {category: SHAPE, max-level: 4, rarity: RARE}
+  LINE: {category: SHAPE, max-level: 4, rarity: RARE}
+  SIGIL: {category: SHAPE, max-level: 4, rarity: RARE}
+  # Targets (5)
+  LOOK_TARGET: {category: TARGET, max-level: 3, rarity: UNCOMMON}
+  NEAREST_ENEMY: {category: TARGET, max-level: 3, rarity: UNCOMMON}
+  AREA_TARGETS: {category: TARGET, max-level: 3, rarity: UNCOMMON}
+  SELF: {category: TARGET, max-level: 3, rarity: UNCOMMON}
+  ALLIES: {category: TARGET, max-level: 3, rarity: UNCOMMON}
+  # Modifiers (12)
+  POWER: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  VELOCITY: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  RANGE: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  DURATION: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  PIERCE: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  HOMING: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  SPLIT: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  AREA_SCALE: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  EFFICIENCY: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  AMPLIFY_X2: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  AMPLIFY_X3: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  AMPLIFY_X4: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  # Logic (26)
+  FORK: {category: LOGIC, max-level: 5, rarity: EPIC}
+  MERGE_ANY: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  MERGE_ALL: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  IF: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  AND: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  OR: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  NOT: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  DELAY: {category: LOGIC, max-level: 5, rarity: EPIC}
+  REPEAT: {category: LOGIC, max-level: 5, rarity: EPIC}
+  COMPARE: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  MOB_SENSOR: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  AUTOMATION: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  CHAIN: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  CALL: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  SPELL_VARIABLE: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  COUNTER: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  MAGIC_GATE: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  SEQUENCE: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  CHAOS: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  MEMORY_CORE: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  RETURN_CIRCUIT: {category: LOGIC, max-level: 5, rarity: EPIC}
+  PARALLEL: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  MULTI_BRANCH: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  ENVIRONMENT_OBSERVER: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
+  TIMER: {category: LOGIC, max-level: 5, rarity: EPIC}
+  PERIODIC_SIGNAL: {category: LOGIC, max-level: 5, rarity: EPIC}

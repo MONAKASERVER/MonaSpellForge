@@ -1,0 +1,40 @@
+schema-version: 1
+fragment-policy: EXCLUSIVE_ACTIVE_CIRCUIT
+database:
+  file: monaspellforge.sqlite
+security:
+  hmac-secret: ''
+  max-give-amount: 64
+runtime:
+  max-nodes: 25
+  max-edges: 64
+  max-runtime-cost: 128
+  max-range: 64.0
+  max-duration-seconds: 30
+  max-projectiles-per-player: 32
+  repeat-limit: 8
+  minimum-tps: 17.0
+  mana-capacity: 1000.0
+  mana-regeneration-per-second: 10.0
+equipment-mana:
+  enabled: true
+  # 防具4枠・メインハンド・オフハンドの青色Lore「MP: 数値」「MPS: 数値」を加算。
+  maximum-mp-bonus: 100000.0
+  maximum-mps-bonus: 10000.0
+editor:
+  session-timeout-seconds: 900
+  max-packets-per-second: 20
+  max-packet-bytes: 30000
+hud:
+  enabled: true
+  update-interval-ticks: 10
+  vanilla-health-scale: 20.0
+upgrades:
+  enabled: true
+  failure-keeps-level: true
+  pity-enabled: false
+integrations:
+  vault: true
+  mythicmobs: true
+  floodgate: true
+  worldguard: true

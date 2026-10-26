@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "monaspellforge",
+  "version": "${version}",
+  "name": "MonaSpellForge",
+  "description": "Advanced 5x5 spell circuit editor for MONAKA SERVER",
+  "authors": ["MONAKA SERVER"],
+  "environment": "client",
+  "entrypoints": {"client": ["net.monacraft.spellforge.fabric.MonaSpellForgeClient"]},
+  "depends": {
+    "fabricloader": ">=0.19.4",
+    "minecraft": "26.1.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

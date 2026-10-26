@@ -1,0 +1,9 @@
+levels:
+  '1': {diamond-blocks: 8, emerald-blocks: 0, netherite-ingots: 0, mona: 5000, duplicate-count: 1, success: 1.0}
+  '2': {diamond-blocks: 32, emerald-blocks: 16, netherite-ingots: 0, mona: 25000, duplicate-count: 2, success: 0.9}
+  '3': {diamond-blocks: 128, emerald-blocks: 64, netherite-ingots: 2, mona: 100000, duplicate-count: 3, success: 0.7}
+  '4': {diamond-blocks: 512, emerald-blocks: 256, netherite-ingots: 8, mona: 500000, duplicate-count: 5, success: 0.4}
+failure:
+  keep-level: true
+  consume-materials: true
+  pity-enabled: false

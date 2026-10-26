@@ -1,0 +1,11 @@
+limits:
+  node-budget-per-cast: 128
+  repeat: 8
+  execution-depth: 8
+  projectiles-per-player: 32
+  duration-seconds: 30
+  range-blocks: 64
+degradation:
+  minimum-tps: 17.0
+  particle-multiplier: 0.25
+  reject-new-casts: true

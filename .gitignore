@@ -1,0 +1,13 @@
+.gradle/
+build/
+**/build/
+out/
+.idea/
+.vscode/
+*.iml
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+run/
+

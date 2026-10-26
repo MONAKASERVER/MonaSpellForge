@@ -1,0 +1,10 @@
+vault:
+  enabled: true
+mythicmobs:
+  enabled: true
+special-material:
+  provider: NONE
+  id: ''
+proxy:
+  channel: monaspellforge:control
+  require-bridge: false

@@ -1,0 +1,7 @@
+prefix: '&5[MonaSpellForge] &f'
+no-permission: '&cYou do not have permission.'
+player-only: '&cThis command is player-only.'
+fragment-given: '&aIssued fragment: {id} Lv.{level} x{amount}'
+invalid-fragment: '&cUnknown fragment id or level.'
+circuit-saved: '&aCircuit saved.'
+circuit-invalid: '&cCircuit validation failed.'
