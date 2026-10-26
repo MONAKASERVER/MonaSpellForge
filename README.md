@@ -13,8 +13,8 @@ $env:JAVA_HOME='C:\path\to\jdk-25'
 
 成果物:
 
-- `paper/build/libs/MonaSpellForge-Paper-1.3.0.jar`
-- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.3.0.jar`
+- `paper/build/libs/MonaSpellForge-Paper-1.3.1.jar`
+- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.3.1.jar`
 
 Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアントの`mods`へ配置します。ModがないJava版・統合版は54スロットのサーバーGUIを利用できます。
 
@@ -22,7 +22,7 @@ Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアント
 
 [GitHub Releases](https://github.com/MONAKASERVER/MonaSpellForge/releases)から、利用中のMinecraftバージョンに対応する`MonaSpellForge-Fabric-*.jar`をダウンロードし、クライアントの`mods`フォルダへ配置してください。
 
-v1.3.0の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側にも同じ世代のMonaSpellForge Paperプラグインが必要です。
+v1.3.1の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
 
 ## Fabric回路エディター操作
 
