@@ -35,6 +35,7 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -86,6 +87,7 @@ public final class SpellForgeScreen extends Screen {
     private int statusColor = STATUS_WARNING;
     private EditBox searchBox;
     private String searchQuery = "";
+    private Category categoryFilter;
     private int paletteScroll;
     private double zoom = 1.0;
     private int panX;
@@ -268,10 +270,11 @@ public final class SpellForgeScreen extends Screen {
     private void drawPalette(GuiGraphicsExtractor graphics, Rect area, int mouseX, int mouseY) {
         drawMinecraftPanel(graphics, area.x, area.y, area.width, area.height, 0xFF222A34);
         graphics.text(font, Component.literal("所持ノード"), area.x + 9, area.y + 10, TEXT_PRIMARY, false);
-        List<OwnedFragment> filtered = filteredPalette();
-        int listTop = area.y + 53;
+        drawCategoryTabs(graphics, area, mouseX, mouseY);
+        List<PaletteGroup> filtered = filteredPalette();
+        int listTop = paletteListTop(area);
         int rowHeight = 36;
-        int visible = Math.max(1, (area.height - 62) / rowHeight);
+        int visible = Math.max(1, (area.bottom() - listTop - 22) / rowHeight);
         int maxScroll = Math.max(0, filtered.size() - visible);
         paletteScroll = Math.min(paletteScroll, maxScroll);
         Set<UUID> used = usedFragmentIds();
@@ -279,21 +282,30 @@ public final class SpellForgeScreen extends Screen {
         for (int row = 0; row < visible; row++) {
             int index = paletteScroll + row;
             if (index >= filtered.size()) break;
-            OwnedFragment fragment = filtered.get(index);
+            PaletteGroup group = filtered.get(index);
+            OwnedFragment fragment = group.representative();
             int rowY = listTop + row * rowHeight;
             boolean hovered = mouseX >= area.x + 6 && mouseX <= area.right() - 6
                     && mouseY >= rowY && mouseY < rowY + 32;
-            boolean placed = used.contains(fragment.instanceId());
+            int placedCount = group.placedCount(used);
+            boolean placed = placedCount >= group.fragments().size();
             int accent = categoryColor(definition(fragment.fragmentId()).category());
             graphics.fill(area.x + 6, rowY, area.right() - 6, rowY + 32,
                     hovered ? 0xFF46515F : 0xFF303A46);
             graphics.fill(area.x + 6, rowY, area.x + 9, rowY + 32, accent);
             FragmentPresentation.Entry presentation = FragmentPresentation.get(fragment.fragmentId());
-            graphics.text(font, fit(presentation.plainName(), area.width - 31), area.x + 14, rowY + 6,
+            String amount = "×" + group.fragments().size();
+            graphics.text(font, fit(presentation.plainName(), area.width - 42 - font.width(amount)), area.x + 14, rowY + 6,
+                    placed ? 0xFF808993 : TEXT_PRIMARY, false);
+            graphics.text(font, Component.literal(amount), area.right() - 12 - font.width(amount), rowY + 6,
                     placed ? 0xFF808993 : TEXT_PRIMARY, false);
             String detail = "Lv." + fragment.level() + " ・ " + FragmentPresentation.categoryName(definition(fragment.fragmentId()).category());
-            graphics.text(font, fit(detail, area.width - 31), area.x + 14, rowY + 19, TEXT_MUTED, false);
-            if (placed) graphics.text(font, Component.literal("配置済"), area.right() - 43, rowY + 19, 0xFF6FCA9B, false);
+            graphics.text(font, fit(detail, area.width - 67), area.x + 14, rowY + 19, TEXT_MUTED, false);
+            if (placedCount > 0) {
+                String placement = placedCount + "/" + group.fragments().size();
+                graphics.text(font, Component.literal(placement), area.right() - 12 - font.width(placement), rowY + 19,
+                        placed ? 0xFF6FCA9B : 0xFFFFD36A, false);
+            }
         }
 
         if (filtered.isEmpty()) {
@@ -302,6 +314,23 @@ public final class SpellForgeScreen extends Screen {
         }
         String page = filtered.isEmpty() ? "0 / 0" : (paletteScroll + 1) + "-" + Math.min(filtered.size(), paletteScroll + visible) + " / " + filtered.size();
         graphics.centeredText(font, Component.literal(page), area.x + area.width / 2, area.bottom() - 13, TEXT_MUTED);
+    }
+
+    private void drawCategoryTabs(GuiGraphicsExtractor graphics, Rect area, int mouseX, int mouseY) {
+        CategoryTab[] tabs = CategoryTab.values();
+        int gap = 2;
+        int tabWidth = (area.width - 12 - gap * (tabs.length - 1)) / tabs.length;
+        int x = area.x + 6;
+        int y = area.y + 51;
+        for (CategoryTab tab : tabs) {
+            boolean selected = tab.category == categoryFilter;
+            boolean hovered = mouseX >= x && mouseX < x + tabWidth && mouseY >= y && mouseY < y + 18;
+            int accent = tab.category == null ? 0xFF607080 : categoryColor(tab.category);
+            graphics.fill(x, y, x + tabWidth, y + 18, selected ? accent : hovered ? 0xFF46515F : 0xFF303A46);
+            graphics.centeredText(font, Component.literal(tab.label), x + tabWidth / 2, y + 5,
+                    selected ? 0xFFFFFFFF : TEXT_MUTED);
+            x += tabWidth + gap;
+        }
     }
 
     private void drawFooter(GuiGraphicsExtractor graphics, int left, int top, int panelWidth, int panelHeight) {
@@ -473,6 +502,13 @@ public final class SpellForgeScreen extends Screen {
             contextMenu = null;
         }
         if (super.mouseClicked(event, doubleClick)) return true;
+
+        Category category = categoryAt(mouseX, mouseY);
+        if (button == 0 && categoryTabRect().contains(mouseX, mouseY)) {
+            categoryFilter = category;
+            paletteScroll = 0;
+            return true;
+        }
 
         Rect canvas = canvasRect();
         Map<UUID, NodeBox> boxes = layoutNodes(canvas);
@@ -862,24 +898,51 @@ public final class SpellForgeScreen extends Screen {
     private OwnedFragment paletteAt(int mouseX, int mouseY) {
         Rect area = paletteRect();
         if (!area.contains(mouseX, mouseY)) return null;
-        int row = (mouseY - (area.y + 53)) / 36;
+        int row = (mouseY - paletteListTop(area)) / 36;
         if (row < 0) return null;
-        List<OwnedFragment> filtered = filteredPalette();
+        List<PaletteGroup> filtered = filteredPalette();
         int index = paletteScroll + row;
-        return index >= 0 && index < filtered.size() ? filtered.get(index) : null;
+        if (index < 0 || index >= filtered.size()) return null;
+        PaletteGroup group = filtered.get(index);
+        Set<UUID> used = usedFragmentIds();
+        return group.fragments().stream().filter(fragment -> !used.contains(fragment.instanceId()))
+                .findFirst().orElse(group.representative());
     }
 
-    private List<OwnedFragment> filteredPalette() {
+    private List<PaletteGroup> filteredPalette() {
         String query = searchQuery.trim().toLowerCase(Locale.ROOT);
-        if (query.isEmpty()) return palette;
-        return palette.stream().filter(fragment -> {
+        Map<PaletteKey, List<OwnedFragment>> groups = new LinkedHashMap<>();
+        palette.stream().filter(fragment -> {
             FragmentDefinition definition = definition(fragment.fragmentId());
+            if (categoryFilter != null && definition.category() != categoryFilter) return false;
+            if (query.isEmpty()) return true;
             String search = FragmentPresentation.get(fragment.fragmentId()).searchText(definition.category())
                     + " " + definition.rarity().toLowerCase(Locale.ROOT) + " lv" + fragment.level();
             for (String token : query.split("\\s+")) if (!search.contains(token)) return false;
             return true;
-        }).toList();
+        }).forEach(fragment -> groups.computeIfAbsent(new PaletteKey(fragment.fragmentId(), fragment.level()), ignored -> new ArrayList<>())
+                .add(fragment));
+        return groups.entrySet().stream().map(entry -> new PaletteGroup(entry.getKey(), List.copyOf(entry.getValue()))).toList();
     }
+
+    private Category categoryAt(int mouseX, int mouseY) {
+        Rect rect = categoryTabRect();
+        if (!rect.contains(mouseX, mouseY)) return categoryFilter;
+        CategoryTab[] tabs = CategoryTab.values();
+        int gap = 2;
+        int tabWidth = (rect.width - gap * (tabs.length - 1)) / tabs.length;
+        int relative = mouseX - rect.x;
+        int index = relative / (tabWidth + gap);
+        if (index < 0 || index >= tabs.length || relative % (tabWidth + gap) >= tabWidth) return categoryFilter;
+        return tabs[index].category;
+    }
+
+    private Rect categoryTabRect() {
+        Rect area = paletteRect();
+        return new Rect(area.x + 6, area.y + 51, area.width - 12, 18);
+    }
+
+    private int paletteListTop(Rect area) { return area.y + 75; }
 
     private Set<UUID> usedFragmentIds() {
         Set<UUID> used = new LinkedHashSet<>();
@@ -1064,6 +1127,22 @@ public final class SpellForgeScreen extends Screen {
     public boolean isPauseScreen() { return false; }
 
     private enum ContextAction { DUPLICATE, DELETE, SEARCH }
+    private enum CategoryTab {
+        ALL("全部", null), TRIGGER("発動", Category.TRIGGER), ELEMENT("属性", Category.ELEMENT),
+        SHAPE("形状", Category.SHAPE), TARGET("対象", Category.TARGET), MODIFIER("補助", Category.MODIFIER),
+        LOGIC("論理", Category.LOGIC);
+
+        final String label;
+        final Category category;
+        CategoryTab(String label, Category category) { this.label = label; this.category = category; }
+    }
+    private record PaletteKey(String fragmentId, int level) { }
+    private record PaletteGroup(PaletteKey key, List<OwnedFragment> fragments) {
+        OwnedFragment representative() { return fragments.getFirst(); }
+        int placedCount(Set<UUID> used) {
+            return (int) fragments.stream().filter(fragment -> used.contains(fragment.instanceId())).count();
+        }
+    }
     private record Rect(int x, int y, int width, int height) {
         int right() { return x + width; }
         int bottom() { return y + height; }
