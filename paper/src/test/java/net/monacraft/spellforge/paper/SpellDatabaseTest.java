@@ -74,6 +74,19 @@ class SpellDatabaseTest {
         }
     }
 
+    @Test void recoversSignedNeutralStoneOnlyWhenLedgerRowIsMissing() throws Exception {
+        UUID owner = UUID.randomUUID();
+        UUID stone = UUID.randomUUID();
+        try (SpellDatabase database = new SpellDatabase(temp.resolve("stone-recovery.sqlite"))) {
+            assertTrue(database.recoverSignedNeutralStone(stone, owner, 5, 1234L, null));
+            SpellDatabase.NeutralStoneRecord recovered = database.neutralStone(stone).orElseThrow();
+            assertEquals(owner, recovered.ownerId());
+            assertEquals(5, recovered.usesRemaining());
+            assertNull(recovered.circuit());
+            assertTrue(database.recoverSignedNeutralStone(stone, owner, 5, 1234L, null));
+        }
+    }
+
     @Test void storedFragmentIsConsumedAtomicallyWhenEmbedded() throws Exception {
         UUID owner=UUID.randomUUID(),instanceId=UUID.randomUUID();
         FragmentInstance instance=new FragmentInstance(instanceId,"FIRE",1,owner,"test",Instant.now());
