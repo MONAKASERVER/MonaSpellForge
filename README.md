@@ -13,8 +13,8 @@ $env:JAVA_HOME='C:\path\to\jdk-25'
 
 成果物:
 
-- `paper/build/libs/MonaSpellForge-Paper-1.5.0.jar`
-- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.5.0.jar`
+- `paper/build/libs/MonaSpellForge-Paper-1.5.1.jar`
+- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.5.1.jar`
 
 Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアントの`mods`へ配置します。ModがないJava版・統合版は54スロットのサーバーGUIを利用できます。
 
@@ -22,7 +22,7 @@ Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアント
 
 [GitHub Releases](https://github.com/MONAKASERVER/MonaSpellForge/releases)から、利用中のMinecraftバージョンに対応する`MonaSpellForge-Fabric-*.jar`をダウンロードし、クライアントの`mods`フォルダへ配置してください。
 
-v1.5.0の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
+v1.5.1の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
 
 ## Fabric回路エディター操作
 
@@ -40,6 +40,7 @@ v1.5.0の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25�
 - 発動時のパーティクルは属性色・魔術形状・分裂・追尾・貫通・連鎖・範囲・持続・増幅ノードに応じて合成
 
 画面内の検証は操作のたびに即時実行されます。保存時にはPaper側でも所有権、欠片署名、配線、実行負荷を再検証します。
+回路1件あたりの実行負荷上限は512です。
 
 ## 最短の試し方
 

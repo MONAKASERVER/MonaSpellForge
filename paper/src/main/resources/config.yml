@@ -8,7 +8,7 @@ security:
 runtime:
   max-nodes: 25
   max-edges: 64
-  max-runtime-cost: 128
+  max-runtime-cost: 512
   max-range: 64.0
   max-duration-seconds: 30
   max-projectiles-per-player: 32

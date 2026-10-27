@@ -8,7 +8,7 @@ import java.util.*;
 public final class CircuitCompiler {
     public static final int MAX_NODES = 25;
     public static final int MAX_EDGES = 64;
-    public static final int MAX_RUNTIME_COST = 128;
+    public static final int MAX_RUNTIME_COST = 512;
 
     private final FragmentCatalog catalog;
 

@@ -13,6 +13,10 @@ class CircuitCompilerTest {
     private final CircuitCompiler compiler = new CircuitCompiler(FragmentCatalog.defaults());
     private final UUID owner = UUID.randomUUID();
 
+    @Test void supportsRuntimeCostUpTo512() {
+        assertEquals(512, CircuitCompiler.MAX_RUNTIME_COST);
+    }
+
     @Test void compilesSimpleTypedCircuit() {
         CircuitNode trigger = node(0, "RIGHT_CLICK");
         CircuitNode element = node(1, "FIRE");

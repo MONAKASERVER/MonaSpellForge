@@ -40,7 +40,7 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
                     equipmentMana ? getConfig().getDouble("equipment-mana.maximum-mps-bonus",10000) : 0);
             if (getConfig().getBoolean("hud.enabled", true)) hud = new StatusHud(this, mana,
                     getConfig().getLong("hud.update-interval-ticks", 10), getConfig().getDouble("hud.vanilla-health-scale", 20.0));
-            spells = new DefaultSpellService(this,database,compiler,mana,new TickBudgetManager(getConfig().getDouble("runtime.minimum-tps",17),getConfig().getInt("runtime.max-runtime-cost",128)));
+            spells = new DefaultSpellService(this,database,compiler,mana,new TickBudgetManager(getConfig().getDouble("runtime.minimum-tps",17),getConfig().getInt("runtime.max-runtime-cost",512)));
             editor = new EditorGui(fragments,circuits,embedding,spells);
             UpgradeService upgrades = new UpgradeService(this,fragments,database);
             ProtocolBridge bridge = new ProtocolBridge(this,circuits,fragments,embedding,database,spells);
