@@ -51,6 +51,8 @@ public final class ArcCompiler {
         private Set<String> stateNames = Set.of();
         private Set<String> functionNames = Set.of();
         private final Deque<LoopContext> loops = new ArrayDeque<>();
+        private final List<List<Block>> deferredScopes = new ArrayList<>();
+        private boolean compilingDeferred;
 
         private Builder(List<Diagnostic> diagnostics) { this.diagnostics = diagnostics; }
 
@@ -92,7 +94,12 @@ public final class ArcCompiler {
             return new ArcBytecode.Program(spell.name(), code, entries, capabilities, requirements, Math.max(fuel, code.size()));
         }
 
-        void block(Block block) { for (Stmt statement : block.statements()) statement(statement); }
+        void block(Block block) {
+            deferredScopes.add(new ArrayList<>());
+            for (Stmt statement : block.statements()) statement(statement);
+            emitDeferredScope(deferredScopes.size() - 1);
+            deferredScopes.removeLast();
+        }
 
         void statement(Stmt stmt) {
             switch (stmt) {
@@ -107,16 +114,49 @@ public final class ArcCompiler {
                 }
                 case RepeatStmt r -> compileRepeat(r);
                 case ForStmt f -> compileFor(f);
-                case ReturnStmt r -> { if (r.value() == null) emit(PUSH_NONE); else expression(r.value()); emit(RETURN); }
+                case DeferStmt d -> {
+                    if (compilingDeferred) error("ARC-E2015", "defer内にdeferをネストできません", d, "外側のdeferへ処理をまとめてください");
+                    else deferredScopes.getLast().add(d.body());
+                }
+                case ReturnStmt r -> {
+                    if (compilingDeferred) {
+                        error("ARC-E2012", "defer内ではreturnを使用できません", r, "defer本体からreturnを削除してください");
+                        break;
+                    }
+                    if (r.value() == null) emit(PUSH_NONE); else expression(r.value());
+                    String result = "$return" + synthetic++;
+                    emit(STORE, result, 0, 0);
+                    emitAllDeferred();
+                    emit(LOAD, result, 0, 0); emit(RETURN);
+                }
                 case BreakStmt ignored -> {
-                    if (loops.isEmpty()) error("ARC-E2010", "break はループ内だけで使用できます", stmt, "forまたはrepeat内へ移動してください");
-                    else loops.peek().breaks.add(jump(JUMP));
+                    if (compilingDeferred) error("ARC-E2013", "defer内ではbreakを使用できません", stmt, "defer本体からbreakを削除してください");
+                    else if (loops.isEmpty()) error("ARC-E2010", "break はループ内だけで使用できます", stmt, "forまたはrepeat内へ移動してください");
+                    else { emitDeferredFrom(loops.peek().deferDepth); loops.peek().breaks.add(jump(JUMP)); }
                 }
                 case ContinueStmt ignored -> {
-                    if (loops.isEmpty()) error("ARC-E2011", "continue はループ内だけで使用できます", stmt, "forまたはrepeat内へ移動してください");
-                    else loops.peek().continues.add(jump(JUMP));
+                    if (compilingDeferred) error("ARC-E2014", "defer内ではcontinueを使用できません", stmt, "defer本体からcontinueを削除してください");
+                    else if (loops.isEmpty()) error("ARC-E2011", "continue はループ内だけで使用できます", stmt, "forまたはrepeat内へ移動してください");
+                    else { emitDeferredFrom(loops.peek().deferDepth); loops.peek().continues.add(jump(JUMP)); }
                 }
             }
+        }
+
+        void emitAllDeferred() { emitDeferredFrom(0); }
+
+        void emitDeferredFrom(int firstScope) {
+            for (int index = deferredScopes.size() - 1; index >= firstScope; index--) emitDeferredScope(index);
+        }
+
+        void emitDeferredScope(int index) {
+            List<Block> blocks = deferredScopes.get(index);
+            boolean previous = compilingDeferred;
+            compilingDeferred = true;
+            try {
+                for (int i = blocks.size() - 1; i >= 0; i--) {
+                    for (Stmt statement : blocks.get(i).statements()) statement(statement);
+                }
+            } finally { compilingDeferred = previous; }
         }
 
         void compileRepeat(RepeatStmt repeat) {
@@ -125,7 +165,7 @@ public final class ArcCompiler {
             int start = code.size();
             emit(LOAD, counter, 0, 0); emit(PUSH_LONG, "", 0, 0); emit(GT);
             int exit = jump(JUMP_IF_FALSE);
-            LoopContext context = new LoopContext(); loops.push(context);
+            LoopContext context = new LoopContext(deferredScopes.size()); loops.push(context);
             block(repeat.body()); loops.pop();
             int continueTarget = code.size(); context.continues.forEach(at -> patchTo(at, continueTarget));
             emit(LOAD, counter, 0, 0); emit(PUSH_LONG, "", 1, 0); emit(SUB); emit(STORE, counter, 0, 0);
@@ -140,7 +180,7 @@ public final class ArcCompiler {
             emit(LOAD, iterator, 0, 0); emit(ITER_HAS_NEXT);
             int exit = jump(JUMP_IF_FALSE);
             emit(LOAD, iterator, 0, 0); emit(ITER_NEXT); emit(STORE, loop.variable(), 0, 0);
-            LoopContext context = new LoopContext(); loops.push(context);
+            LoopContext context = new LoopContext(deferredScopes.size()); loops.push(context);
             block(loop.body()); loops.pop();
             int continueTarget = code.size(); context.continues.forEach(at -> patchTo(at, continueTarget));
             emit(JUMP, "", start, 0); patch(exit); context.breaks.forEach(this::patch);
@@ -266,8 +306,10 @@ public final class ArcCompiler {
             diagnostics.add(new Diagnostic(code, Severity.ERROR, message, node.span(), suggestion));
         }
         private static final class LoopContext {
+            final int deferDepth;
             final List<Integer> breaks = new ArrayList<>();
             final List<Integer> continues = new ArrayList<>();
+            private LoopContext(int deferDepth) { this.deferDepth = deferDepth; }
         }
     }
 

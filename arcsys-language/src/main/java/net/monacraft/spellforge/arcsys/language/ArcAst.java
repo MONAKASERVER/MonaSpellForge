@@ -41,7 +41,7 @@ public final class ArcAst {
     public record HandlerDecl(Trigger trigger, Expr argument, Block body, Span span) implements Node { }
 
     public sealed interface Stmt extends Node permits Block, VarDecl, IfStmt, ForStmt,
-        RepeatStmt, ReturnStmt, BreakStmt, ContinueStmt, ExprStmt { }
+        RepeatStmt, DeferStmt, ReturnStmt, BreakStmt, ContinueStmt, ExprStmt { }
 
     public record Block(List<Stmt> statements, Span span) implements Stmt {
         public Block { statements = List.copyOf(statements); }
@@ -53,6 +53,7 @@ public final class ArcAst {
     public record IfStmt(Expr condition, Block thenBranch, Block elseBranch, Span span) implements Stmt { }
     public record ForStmt(String variable, Expr iterable, Block body, Span span) implements Stmt { }
     public record RepeatStmt(Expr count, Block body, Span span) implements Stmt { }
+    public record DeferStmt(Block body, Span span) implements Stmt { }
     public record ReturnStmt(Expr value, Span span) implements Stmt { }
     public record BreakStmt(Span span) implements Stmt { }
     public record ContinueStmt(Span span) implements Stmt { }

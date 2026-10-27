@@ -58,6 +58,7 @@ public final class ArcTypeChecker {
                 scopes.push(new HashMap<>()); define(f.variable(), iterable.element() == null ? ANY : iterable.element()); block(f.body()); scopes.pop();
             }
             case RepeatStmt r -> { ArcType count = infer(r.count()); if (count.kind() != Kind.INT && count.kind() != Kind.ANY) error("ARC-T5002", "repeat回数はIntである必要があります", r.count()); block(r.body()); }
+            case DeferStmt d -> block(d.body());
             case ReturnStmt r -> { if (r.value() != null) infer(r.value()); }
             case BreakStmt ignored -> { }
             case ContinueStmt ignored -> { }

@@ -6,6 +6,21 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ArcParserTest {
+    @Test
+    void parsesDeferredCleanupBlock() {
+        String source = """
+            spell Cleanup {
+              on cast {
+                defer { event.emit(\"cleanup\"); }
+                return 7;
+              }
+            }
+            """;
+        var result = ArcParser.parse(source);
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        var statement = result.program().spells().getFirst().handlers().getFirst().body().statements().getFirst();
+        assertInstanceOf(ArcAst.DeferStmt.class, statement);
+    }
     private static final String SAMPLE = """
         spell ApocalypseEngine {
           on pulse(20t) {

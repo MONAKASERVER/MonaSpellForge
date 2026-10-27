@@ -11,6 +11,7 @@ This document separates implemented execution semantics from accepted design. A 
 - Events: cast, pulse, hit, kill, damage, damage_taken, death, enter, mana_below, spell_end, signal and projectile_impact.
 - `requires fragments` and `requires permission` metadata, Paper-side ownership/permission validation and revision persistence.
 - `chance`, `wait`, `every`, Skript-style `cast ... at ...`, `apply ... to ... for ...` lowering into the same compiler/VM.
+- Lexically scoped `defer` cleanup in LIFO order on normal block exit, `return`, `break` and `continue`; control-flow and nested defer inside cleanup blocks are rejected.
 - Capability discovery and closed APIs for math, targets, combat, mana, particles, displays, raycast, block/item observation, ArcSys storage and time.
 - Operator-only capability boundary for the future Skript bridge; arbitrary Skript, commands, JVM, OS, files and sockets remain unavailable.
 - Deterministic bytecode, verifier, fuel/stack/list/string/effect/call-depth limits and simulation effect requests.
@@ -25,7 +26,7 @@ This document separates implemented execution semantics from accepted design. A 
 
 - `Option<T>`, `Result<T,E>`, `?`, constructor-pattern matching and exhaustive enum checking.
 - Full statement/block match arms and enum/struct runtime values.
-- `defer`, `parallel all/any`, `race`, `await`, conditional wait and resumable cooperative tasks.
+- `parallel all/any`, `race`, `await`, conditional wait and resumable cooperative tasks.
 - Typed persistent state scopes, TTL cleanup, version migration and player data erasure.
 - Contract `requires/ensures`, effect-function signatures and static budget annotations as enforceable constructs.
 - Target selection DSL, node `bind`, channel/charge/release and cross-spell signal loop prevention.

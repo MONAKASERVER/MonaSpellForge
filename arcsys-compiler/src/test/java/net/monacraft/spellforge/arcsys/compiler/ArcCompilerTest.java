@@ -5,6 +5,27 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ArcCompilerTest {
+    @Test
+    void emitsDeferredCleanupBeforeReturn() {
+        String source = """
+            spell Cleanup {
+              on cast {
+                defer { event.emit(\"cleanup\"); }
+                return 7;
+              }
+            }
+            """;
+        var result = new ArcCompiler().compile(source);
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        var code = result.program().instructions();
+        int cleanup = -1;
+        int firstReturn = -1;
+        for (int i = 0; i < code.size(); i++) {
+            if (cleanup < 0 && code.get(i).op() == ArcBytecode.Op.CALL_HOST && code.get(i).text().startsWith("event.emit")) cleanup = i;
+            if (firstReturn < 0 && code.get(i).op() == ArcBytecode.Op.RETURN) firstReturn = i;
+        }
+        assertTrue(cleanup >= 0 && cleanup < firstReturn);
+    }
     private static final String SOURCE = """
         spell Test { on pulse(20t) {
           let targets = mobs.hostile(radius: 24, limit: 8);

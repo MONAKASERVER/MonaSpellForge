@@ -156,6 +156,7 @@ public final class ArcParser {
         if (match(CHANCE)) return chanceStatement(previous());
         if (match(EVERY)) return everyStatement(previous());
         if (match(AFTER)) return afterStatement(previous());
+        if (match(DEFER)) return deferStatement(previous());
         if (match(CAST)) return castStatement(previous());
         if (match(APPLY)) return applyStatement(previous());
         if (match(EMIT)) { Token begin = previous(); match(SIGNAL); return hostStatement(begin, "event.emit"); }
@@ -270,6 +271,11 @@ public final class ArcParser {
         Call waitCall = hostCall("time", "wait", begin.span(), List.of(delay));
         List<Stmt> statements = new ArrayList<>(); statements.add(new ExprStmt(waitCall, waitCall.span())); statements.addAll(original.statements());
         return new Block(statements, join(begin.span(), original.span()));
+    }
+
+    private Stmt deferStatement(Token begin) {
+        Block body = block();
+        return new DeferStmt(body, join(begin.span(), body.span()));
     }
 
     private long boundedPeriodCount(Expr interval, Expr duration) {
@@ -538,7 +544,7 @@ public final class ArcParser {
     private boolean check(Type type) { return peek().type() == type; }
     private static boolean isPropertyName(Type type) {
         return switch (type) {
-            case IDENT, CAST, WAIT, SIGNAL, SPAWN, RAYCAST, APPLY, LIMIT, ORDER, BY, WHERE,
+            case IDENT, CAST, WAIT, SIGNAL, EMIT, SPAWN, RAYCAST, APPLY, LIMIT, ORDER, BY, WHERE,
                  ASC, DESC, ENTER, DAMAGE, DEATH, PULSE, HIT, KILL, SPELL_END, PROJECTILE_IMPACT,
                  STATE, TYPE, EFFECT, PERMISSION, FRAGMENTS, WITH, WITHIN, AT, TO -> true;
             default -> false;
@@ -555,7 +561,7 @@ public final class ArcParser {
     private void synchronizeStatement() {
         while (!atEnd()) {
             if (current > 0 && previous().type() == SEMICOLON) return;
-            if (check(RIGHT_BRACE) || check(LET) || check(CONST) || check(STATE) || check(IF) || check(FOR) || check(REPEAT) || check(RETURN)) return;
+            if (check(RIGHT_BRACE) || check(LET) || check(CONST) || check(STATE) || check(IF) || check(FOR) || check(REPEAT) || check(DEFER) || check(RETURN)) return;
             advance();
         }
     }
