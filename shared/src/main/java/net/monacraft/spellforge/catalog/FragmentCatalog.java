@@ -11,7 +11,7 @@ public final class FragmentCatalog {
     public static final List<String> SHAPES = List.of("PROJECTILE", "BEAM", "WAVE", "BURST", "BARRIER", "RING", "LINE", "SIGIL");
     public static final List<String> TARGETS = List.of("LOOK_TARGET", "NEAREST_ENEMY", "AREA_TARGETS", "SELF", "ALLIES");
     public static final List<String> MODIFIERS = List.of("POWER", "VELOCITY", "RANGE", "DURATION", "PIERCE", "HOMING", "SPLIT", "AREA_SCALE", "EFFICIENCY",
-            "AMPLIFY_X2", "AMPLIFY_X3", "AMPLIFY_X4", "CIRCUIT_SPEED");
+            "AMPLIFY_X2", "AMPLIFY_X3", "AMPLIFY_X4", "CIRCUIT_SPEED", "ARMOR_PENETRATION", "TRUE_DAMAGE");
     public static final List<String> LOGIC = List.of("FORK", "MERGE_ANY", "MERGE_ALL", "IF", "AND", "OR", "NOT", "DELAY", "REPEAT", "COMPARE",
             "MOB_SENSOR", "AUTOMATION", "CHAIN", "CALL", "SPELL_VARIABLE", "COUNTER", "MAGIC_GATE", "SEQUENCE", "CHAOS", "MEMORY_CORE",
             "RETURN_CIRCUIT", "PARALLEL", "MULTI_BRANCH", "ENVIRONMENT_OBSERVER", "TIMER", "PERIODIC_SIGNAL");
@@ -24,7 +24,7 @@ public final class FragmentCatalog {
         for (FragmentDefinition definition : definitions) {
             if (map.putIfAbsent(definition.id(), definition) != null) throw new IllegalArgumentException("Duplicate fragment: " + definition.id());
         }
-        if (map.size() != 70) throw new IllegalArgumentException("Catalog must contain exactly 70 fragments, got " + map.size());
+        if (map.size() != 72) throw new IllegalArgumentException("Catalog must contain exactly 72 fragments, got " + map.size());
         this.definitions = Map.copyOf(map);
         this.version = version;
     }
@@ -35,7 +35,7 @@ public final class FragmentCatalog {
     public long version() { return version; }
 
     public static FragmentCatalog defaults() {
-        List<FragmentDefinition> all = new ArrayList<>(70);
+        List<FragmentDefinition> all = new ArrayList<>(72);
         TRIGGERS.forEach(id -> all.add(definition(id, Category.TRIGGER, 3)));
         ELEMENTS.forEach(id -> all.add(definition(id, Category.ELEMENT, switch (id) { case "GRAVITY", "HEAL", "ARCANE" -> 5; default -> 4; })));
         SHAPES.forEach(id -> all.add(definition(id, Category.SHAPE, switch (id) { case "PROJECTILE", "BURST" -> 5; default -> 4; })));
@@ -59,6 +59,12 @@ public final class FragmentCatalog {
                 double speedMultiplier = level * 2.0;
                 levels.put(level, new LevelParameters(speedMultiplier, 0, 0,
                         18.0 * level, 12 * level));
+            } else if (id.equals("ARMOR_PENETRATION")) {
+                levels.put(level, new LevelParameters(0.15 + (level - 1) * 0.10, 0, 0,
+                        10.0 + level * 6.0, 4 + level));
+            } else if (id.equals("TRUE_DAMAGE")) {
+                levels.put(level, new LevelParameters(50 + level * level * 10.0, 0, 0,
+                        80.0 + level * 55.0, 72 + level * 30));
             } else levels.put(level, new LevelParameters(basePower * (1 + (level - 1) * 0.28), 12 + level * 6,
                     2 + level * 1.5, baseMana * (1 + (level - 1) * 0.35), baseRuntime + level - 1));
         }

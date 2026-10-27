@@ -13,6 +13,7 @@ import net.minecraft.network.chat.Component;
 import net.monacraft.spellforge.catalog.FragmentCatalog;
 import net.monacraft.spellforge.catalog.FragmentPresentation;
 import net.monacraft.spellforge.compiler.CircuitCompiler;
+import net.monacraft.spellforge.compiler.SpellMetrics;
 import net.monacraft.spellforge.model.SpellModel.Category;
 import net.monacraft.spellforge.model.SpellModel.Circuit;
 import net.monacraft.spellforge.model.SpellModel.CircuitEdge;
@@ -53,7 +54,7 @@ public final class SpellForgeScreen extends Screen {
     private static final int PANEL_MAX_WIDTH = 1_100;
     private static final int PANEL_MAX_HEIGHT = 650;
     private static final int HEADER_HEIGHT = 34;
-    private static final int FOOTER_HEIGHT = 62;
+    private static final int FOOTER_HEIGHT = 86;
     private static final int PALETTE_WIDTH = 220;
     private static final int NODE_WIDTH = 118;
     private static final int NODE_HEIGHT = 76;
@@ -335,8 +336,27 @@ public final class SpellForgeScreen extends Screen {
 
     private void drawFooter(GuiGraphicsExtractor graphics, int left, int top, int panelWidth, int panelHeight) {
         int statusX = left + 9;
-        int statusY = top + panelHeight - FOOTER_HEIGHT + 5;
+        int metricsY = top + panelHeight - FOOTER_HEIGHT + 5;
         int statusWidth = panelWidth - 18;
+        drawInsetPanel(graphics, statusX, metricsY, statusWidth, 22);
+        String metricsText;
+        int metricsColor = 0xFFB8DFFF;
+        if (validation != null && validation.valid()) {
+            SpellMetrics.CombatMetrics metrics = SpellMetrics.calculate(validation.spell());
+            metricsText = "攻撃力: " + decimal(metrics.attackPower())
+                    + "  |  DPS: " + decimal(metrics.dps())
+                    + "  |  連射力: " + decimal(metrics.fireRate()) + "/秒"
+                    + "  |  消費魔力: " + (int) Math.ceil(metrics.manaCost());
+            if (metrics.armorPenetrationPercent() > 0) metricsText += "  |  防御貫通: " + (int) Math.round(metrics.armorPenetrationPercent()) + "%";
+            if (metrics.trueDamage()) { metricsText += "  |  TRUE DAMAGE"; metricsColor = STATUS_ERROR; }
+        } else {
+            metricsText = "攻撃力: --  |  DPS: --  |  連射力: --  |  消費魔力: --";
+            metricsColor = TEXT_MUTED;
+        }
+        graphics.centeredText(font, Component.literal(fit(metricsText, statusWidth - 16)),
+                statusX + statusWidth / 2, metricsY + 7, metricsColor);
+
+        int statusY = metricsY + 24;
         drawInsetPanel(graphics, statusX, statusY, statusWidth, 22);
         String count = "ノード " + circuit.nodes().size() + "/25 ・ 配線 " + circuit.edges().size() + "/64"
                 + " ・ " + Math.round(zoom * 100) + "%";

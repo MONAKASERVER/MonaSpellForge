@@ -6,6 +6,10 @@ import net.monacraft.spellforge.api.SpellService;
 import net.monacraft.spellforge.compiler.CircuitCompiler;
 import net.monacraft.spellforge.model.SpellModel.*;
 import org.bukkit.*;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.damage.DamageSource;
+import org.bukkit.damage.DamageType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
@@ -197,20 +201,57 @@ final class DefaultSpellService implements SpellService {
         CircuitNode node = spell.executionOrder().stream().filter(n -> n.fragmentId().equals(element)).findFirst().orElse(null);
         double base = node == null ? 8 : spell.resolvedDefinitions().get(node.nodeId()).levels().get(node.level()).power();
         double damage = Math.min(320, base * multiplier);
-        switch (element) {
-            case "FIRE" -> { target.damage(damage, caster); target.setFireTicks(Math.max(target.getFireTicks(), 60)); }
-            case "ICE" -> { target.damage(damage * 0.8, caster); target.setFreezeTicks(Math.max(target.getFreezeTicks(), target.getMaxFreezeTicks() + 40)); target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 80, 2)); }
-            case "WIND" -> { target.damage(damage * 0.65, caster); target.setVelocity(target.getVelocity().add(target.getLocation().toVector().subtract(caster.getLocation().toVector()).normalize().multiply(1.4).setY(0.5))); }
-            case "EARTH" -> { target.damage(damage * 1.25, caster); target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 60, 1)); }
-            case "LIGHTNING" -> { target.getWorld().strikeLightningEffect(target.getLocation()); target.damage(damage * 1.1, caster); }
-            case "WATER" -> { target.damage(damage * 0.7, caster); target.setFireTicks(0); target.setVelocity(target.getVelocity().multiply(0.5)); }
-            case "LIGHT" -> { target.damage(damage, caster); target.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 120, 0)); }
-            case "DARK" -> { target.damage(damage, caster); target.addPotionEffect(new PotionEffect(PotionEffectType.DARKNESS, 80, 0)); }
-            case "POISON" -> { target.damage(damage * 0.45, caster); target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, 100, 1)); }
-            case "GRAVITY" -> { target.damage(damage * 0.8, caster); target.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, 35, 2)); }
-            case "HEAL" -> target.setHealth(Math.min(target.getMaxHealth(), target.getHealth() + damage));
-            default -> target.damage(damage, caster);
+        CircuitNode trueDamage = node(spell, "TRUE_DAMAGE");
+        if (trueDamage != null) {
+            LevelParameters parameters = spell.resolvedDefinitions().get(trueDamage.nodeId()).levels().get(trueDamage.level());
+            damage = Math.min(1_200, Math.max(damage, parameters.power() * multiplier));
         }
+        switch (element) {
+            case "FIRE" -> { dealDamage(caster, target, damage, spell); target.setFireTicks(Math.max(target.getFireTicks(), 60)); }
+            case "ICE" -> { dealDamage(caster, target, damage * 0.8, spell); target.setFreezeTicks(Math.max(target.getFreezeTicks(), target.getMaxFreezeTicks() + 40)); target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 80, 2)); }
+            case "WIND" -> { dealDamage(caster, target, damage * 0.65, spell); target.setVelocity(target.getVelocity().add(target.getLocation().toVector().subtract(caster.getLocation().toVector()).normalize().multiply(1.4).setY(0.5))); }
+            case "EARTH" -> { dealDamage(caster, target, damage * 1.25, spell); target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 60, 1)); }
+            case "LIGHTNING" -> { target.getWorld().strikeLightningEffect(target.getLocation()); dealDamage(caster, target, damage * 1.1, spell); }
+            case "WATER" -> { dealDamage(caster, target, damage * 0.7, spell); target.setFireTicks(0); target.setVelocity(target.getVelocity().multiply(0.5)); }
+            case "LIGHT" -> { dealDamage(caster, target, damage, spell); target.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, 120, 0)); }
+            case "DARK" -> { dealDamage(caster, target, damage, spell); target.addPotionEffect(new PotionEffect(PotionEffectType.DARKNESS, 80, 0)); }
+            case "POISON" -> { dealDamage(caster, target, damage * 0.45, spell); target.addPotionEffect(new PotionEffect(PotionEffectType.POISON, 100, 1)); }
+            case "GRAVITY" -> { dealDamage(caster, target, damage * 0.8, spell); target.addPotionEffect(new PotionEffect(PotionEffectType.LEVITATION, 35, 2)); }
+            case "HEAL" -> target.setHealth(Math.min(target.getMaxHealth(), target.getHealth() + damage));
+            default -> dealDamage(caster, target, damage, spell);
+        }
+    }
+
+    private void dealDamage(Player caster, LivingEntity target, double damage, CompiledSpell spell) {
+        if (node(spell, "TRUE_DAMAGE") != null) {
+            DamageSource source = DamageSource.builder(DamageType.GENERIC_KILL)
+                    .withCausingEntity(caster).withDirectEntity(caster).build();
+            target.damage(damage, source);
+            return;
+        }
+        CircuitNode penetrationNode = node(spell, "ARMOR_PENETRATION");
+        double adjustedDamage = damage;
+        if (penetrationNode != null) {
+            LevelParameters parameters = spell.resolvedDefinitions().get(penetrationNode.nodeId()).levels().get(penetrationNode.level());
+            adjustedDamage = compensateForArmorPenetration(target, damage, clamp(parameters.power(), 0, 0.8));
+        }
+        target.damage(adjustedDamage, caster);
+    }
+
+    static double compensateForArmorPenetration(LivingEntity target, double damage, double penetration) {
+        AttributeInstance armorAttribute = target.getAttribute(Attribute.ARMOR);
+        AttributeInstance toughnessAttribute = target.getAttribute(Attribute.ARMOR_TOUGHNESS);
+        double armor = armorAttribute == null ? 0 : Math.max(0, armorAttribute.getValue());
+        double toughness = toughnessAttribute == null ? 0 : Math.max(0, toughnessAttribute.getValue());
+        if (armor <= 0 || penetration <= 0) return damage;
+        double currentMultiplier = armorMultiplier(damage, armor, toughness);
+        double desiredMultiplier = armorMultiplier(damage, armor * (1 - penetration), toughness);
+        return Math.min(damage * 4, damage * desiredMultiplier / Math.max(0.05, currentMultiplier));
+    }
+
+    static double armorMultiplier(double damage, double armor, double toughness) {
+        double reductionPoints = Math.min(20.0, Math.max(armor / 5.0, armor - damage / (2.0 + toughness / 4.0)));
+        return 1.0 - reductionPoints / 25.0;
     }
 
     @Override public int cancel(UUID playerId) { Set<UUID> removed = active.remove(playerId);Set<BukkitTask> tasks=scheduled.remove(playerId);if(tasks!=null)tasks.forEach(BukkitTask::cancel);return removed == null ? 0 : removed.size(); }
