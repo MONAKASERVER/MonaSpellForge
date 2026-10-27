@@ -1,6 +1,6 @@
 allprojects {
     group = "net.monacraft.spellforge"
-    version = "1.7.0"
+    version = "2.0.0-alpha.1"
 
     repositories {
         mavenCentral()
@@ -19,5 +19,5 @@ subprojects {
 }
 
 tasks.register("dist") {
-    dependsOn(":paper:shadowJar", ":fabric:remapJar")
+    dependsOn(":paper:shadowJar", ":fabric:remapJar", ":arcsys-cli:distZip")
 }

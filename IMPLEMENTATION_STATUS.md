@@ -69,3 +69,31 @@
 - 設定YAMLからのホットリロード可能な全パラメータ差し替え
 
 ビルド成功のみで実サーバー動作確認済みとは扱っていません。
+
+# MonaSpellForge 2.0 implementation status
+
+## 2.0.0-alpha.1
+
+Implemented and covered by automated tests:
+
+- Java 25 ArcSys lexer, parser and immutable AST.
+- Closed deterministic ArcVM bytecode compiler and capability discovery.
+- Fuel, stack, list, string and effect bounded VM with no reflection, file, process, SQL or network API.
+- Offline `arcsys check`, `compile` and `disasm` CLI.
+- Additive SQLite Arc spell/revision/deploy-audit storage with optimistic revision conflicts.
+- Paper-authoritative compile, validation, deployment and bounded simulation.
+- Append-only v1 custom-payload protocol additions.
+- Fabric loopback-only WebSocket bridge with explicit in-game pairing code, TTL, one client, size/rate limits and disconnect revocation.
+- VS Code `.arc` language registration, TextMate grammar, LSP diagnostics/completion/hover/definition/formatting.
+- VS Code command set and ArcSys Studio tree.
+
+Feature-gated / not represented as complete:
+
+- Production combat-effect execution from ArcVM.
+- Breakpoint suspension and live variable watch (the alpha command runs server simulation only).
+- Bidirectional lossless conversion for every legacy 5×5 node.
+- Graphical VS Code node editor.
+- Cross-proxy verification and production load/fuzz certification.
+- ArcSys-only fragments in loot/gacha.
+
+Production remains on the stable 1.7 line until the release-candidate migration and operational tests pass.

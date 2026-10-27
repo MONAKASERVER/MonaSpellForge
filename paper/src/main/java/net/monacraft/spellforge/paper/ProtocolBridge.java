@@ -14,6 +14,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
+import org.bukkit.event.Listener;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
@@ -26,7 +29,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-final class ProtocolBridge implements PluginMessageListener {
+final class ProtocolBridge implements PluginMessageListener, Listener {
     static final String CHANNEL = "monaspellforge:bridge";
 
     private final Plugin plugin;
@@ -35,6 +38,7 @@ final class ProtocolBridge implements PluginMessageListener {
     private final SpellDatabase database;
     private final CircuitEmbeddingService embedding;
     private final DefaultSpellService spells;
+    private final ArcSysService arcSys;
     private final Gson gson = new GsonBuilder()
             .registerTypeAdapter(Instant.class, (com.google.gson.JsonSerializer<Instant>)
                     (value, type, context) -> new com.google.gson.JsonPrimitive(value.toEpochMilli()))
@@ -45,13 +49,14 @@ final class ProtocolBridge implements PluginMessageListener {
     private final Map<UUID, Rate> rates = new ConcurrentHashMap<>();
 
     ProtocolBridge(Plugin plugin, CircuitService circuits, FragmentService fragments, CircuitEmbeddingService embedding,
-                   SpellDatabase database, DefaultSpellService spells) {
+                   SpellDatabase database, DefaultSpellService spells, ArcSysService arcSys) {
         this.plugin = plugin;
         this.circuits = circuits;
         this.fragments = fragments;
         this.embedding = embedding;
         this.database = database;
         this.spells = spells;
+        this.arcSys = arcSys;
     }
 
     boolean openModEditor(Player player) {
@@ -64,6 +69,13 @@ final class ProtocolBridge implements PluginMessageListener {
         openCircuit(player, token, circuit);
         sendLibrary(player, token, "");
         return true;
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        UUID playerId = event.getPlayer().getUniqueId();
+        sessions.remove(playerId);
+        rates.remove(playerId);
     }
 
     @Override
@@ -80,6 +92,11 @@ final class ProtocolBridge implements PluginMessageListener {
             String token = sessions.get(player.getUniqueId());
             if (token == null || !token.equals(frame.sessionToken())) {
                 error(player, frame, "INVALID_SESSION");
+                return;
+            }
+
+            if (frame.type() == SpellForgeProtocol.Type.ARC_REQUEST) {
+                handleArcRequest(player, frame, token);
                 return;
             }
 
@@ -216,6 +233,33 @@ final class ProtocolBridge implements PluginMessageListener {
     private void send(Player player, SpellForgeProtocol.Frame frame) {
         player.sendPluginMessage(plugin, CHANNEL, SpellForgeProtocol.encode(frame));
     }
+
+    private void handleArcRequest(Player player, SpellForgeProtocol.Frame frame, String token) {
+        JsonObjectResponse response;
+        try {
+            if (!player.hasPermission("monaspellforge.arcsys.vscode"))
+                throw new ArcSysService.ArcRequestException("NO_PERMISSION", "VS Code連携権限がありません");
+            com.google.gson.JsonObject request = com.google.gson.JsonParser.parseString(frame.payload()).getAsJsonObject();
+            if (request.get("version").getAsInt() != 1 || !frame.requestId().toString().equals(request.get("id").getAsString()))
+                throw new ArcSysService.ArcRequestException("PROTOCOL", "要求IDまたはバージョンが不正です");
+            String type = request.get("type").getAsString();
+            com.google.gson.JsonObject payload = request.has("payload") && request.get("payload").isJsonObject()
+                    ? request.getAsJsonObject("payload") : new com.google.gson.JsonObject();
+            response = new JsonObjectResponse(true, arcSys.handle(player, type, payload), null, null);
+        } catch (ArcSysService.ArcRequestException rejected) {
+            response = new JsonObjectResponse(false, null, rejected.code, rejected.getMessage());
+        } catch (Exception rejected) {
+            plugin.getLogger().warning("Rejected ArcSys request from " + player.getName() + ": " + rejected.getMessage());
+            response = new JsonObjectResponse(false, null, "SERVER_REJECTED", "サーバーが要求を安全に拒否しました");
+        }
+        com.google.gson.JsonObject json = new com.google.gson.JsonObject();
+        json.addProperty("version", 1); json.addProperty("id", frame.requestId().toString()); json.addProperty("ok", response.ok());
+        if (response.ok()) json.add("result", response.result());
+        else { com.google.gson.JsonObject error = new com.google.gson.JsonObject(); error.addProperty("code", response.code()); error.addProperty("message", response.message()); json.add("error", error); }
+        send(player, new SpellForgeProtocol.Frame(SpellForgeProtocol.Type.ARC_RESPONSE, frame.requestId(), token, null, 0, json.toString()));
+    }
+
+    private record JsonObjectResponse(boolean ok, com.google.gson.JsonObject result, String code, String message) { }
 
     private record Rate(long second, int count) { }
 }

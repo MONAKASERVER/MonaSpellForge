@@ -44,7 +44,8 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
             spells = new DefaultSpellService(this,database,compiler,mana,new TickBudgetManager(getConfig().getDouble("runtime.minimum-tps",17),getConfig().getInt("runtime.max-runtime-cost",512)));
             editor = new EditorGui(fragments,circuits,embedding,spells,database);
             UpgradeService upgrades = new UpgradeService(this,fragments,database);
-            ProtocolBridge bridge = new ProtocolBridge(this,circuits,fragments,embedding,database,spells);
+            ArcSysService arcSys = new ArcSysService(database, fragments);
+            ProtocolBridge bridge = new ProtocolBridge(this,circuits,fragments,embedding,database,spells,arcSys);
             webEditor = new WebEditorBridge(this,circuits,fragments,embedding,database,catalog);
             NeutralMagicStoneService stones = new NeutralMagicStoneService(this,circuits,spells,database,integrity);
             FragmentStorageService fragmentStorage = new FragmentStorageService(fragments,database);
@@ -59,6 +60,7 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
             Bukkit.getPluginManager().registerEvents(swords,this);
             Bukkit.getPluginManager().registerEvents(new SpellTriggerListener(spells,stones,swords,fragments),this);
             Bukkit.getPluginManager().registerEvents(upgrades,this);
+            Bukkit.getPluginManager().registerEvents(bridge,this);
             getServer().getMessenger().registerIncomingPluginChannel(this,ProtocolBridge.CHANNEL,bridge);
             getServer().getMessenger().registerOutgoingPluginChannel(this,ProtocolBridge.CHANNEL);
             MsfCommand commands=new MsfCommand(this,fragments,circuits,spells,editor,bridge,webEditor,upgrades,stones,swords,database);

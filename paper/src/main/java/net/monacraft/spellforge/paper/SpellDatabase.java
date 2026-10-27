@@ -74,6 +74,26 @@ final class SpellDatabase implements AutoCloseable {
                   FOREIGN KEY(instance_uuid) REFERENCES fragment_issuance(instance_uuid)
                 )""");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS stored_fragments_owner_idx ON stored_fragments(owner_uuid, fragment_id, stored_at)");
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS arc_spells(
+                  spell_uuid TEXT PRIMARY KEY, owner_uuid TEXT NOT NULL, name TEXT NOT NULL,
+                  current_revision INTEGER NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
+                  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                )""");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS arc_spells_owner_idx ON arc_spells(owner_uuid, updated_at DESC)");
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS arc_revisions(
+                  spell_uuid TEXT NOT NULL, revision INTEGER NOT NULL, source TEXT NOT NULL,
+                  source_hash TEXT NOT NULL, bytecode BLOB NOT NULL, capabilities TEXT NOT NULL,
+                  created_at INTEGER NOT NULL, PRIMARY KEY(spell_uuid, revision),
+                  FOREIGN KEY(spell_uuid) REFERENCES arc_spells(spell_uuid) ON DELETE CASCADE
+                )""");
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS arc_deploy_audit(
+                  operation_uuid TEXT PRIMARY KEY, spell_uuid TEXT, owner_uuid TEXT NOT NULL,
+                  requested_revision INTEGER NOT NULL, result_code TEXT NOT NULL,
+                  source_hash TEXT, created_at INTEGER NOT NULL
+                )""");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, unixepoch())");
         }
@@ -82,6 +102,7 @@ final class SpellDatabase implements AutoCloseable {
         try (Statement statement = connection.createStatement()) {
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, unixepoch())");
+            statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, unixepoch())");
         }
     }
 
@@ -563,6 +584,101 @@ final class SpellDatabase implements AutoCloseable {
                 + ", casts=" + count("cast_audit", "player_uuid", playerId) + ", upgrades=" + count("upgrade_audit", "player_uuid", playerId);
     }
 
+    synchronized List<ArcSpellSummary> arcSpells(UUID ownerId) {
+        List<ArcSpellSummary> result = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT spell_uuid,name,current_revision,enabled,updated_at FROM arc_spells WHERE owner_uuid=? ORDER BY updated_at DESC")) {
+            ps.setString(1, ownerId.toString());
+            try (ResultSet rows = ps.executeQuery()) {
+                while (rows.next()) result.add(new ArcSpellSummary(UUID.fromString(rows.getString(1)), rows.getString(2),
+                        rows.getLong(3), rows.getInt(4) != 0, rows.getLong(5)));
+            }
+            return result;
+        } catch (SQLException error) { throw new IllegalStateException("Could not list ArcSys spells", error); }
+    }
+
+    synchronized Optional<ArcSpellRevision> arcSpell(UUID spellId, UUID ownerId) {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT s.name,s.current_revision,s.enabled,r.source,r.source_hash,r.capabilities,r.created_at
+                FROM arc_spells s JOIN arc_revisions r ON r.spell_uuid=s.spell_uuid AND r.revision=s.current_revision
+                WHERE s.spell_uuid=? AND s.owner_uuid=?""")) {
+            ps.setString(1, spellId.toString()); ps.setString(2, ownerId.toString());
+            try (ResultSet row = ps.executeQuery()) {
+                if (!row.next()) return Optional.empty();
+                return Optional.of(new ArcSpellRevision(spellId, row.getString(1), row.getLong(2), row.getInt(3) != 0,
+                        row.getString(4), row.getString(5), row.getString(6), row.getLong(7)));
+            }
+        } catch (SQLException error) { throw new IllegalStateException("Could not open ArcSys spell", error); }
+    }
+
+    synchronized ArcSpellRevision deployArcSpell(UUID ownerId, UUID requestedId, long expectedRevision,
+                                                  String name, String source, String hash, byte[] bytecode,
+                                                  String capabilities) {
+        UUID spellId = requestedId == null ? UUID.randomUUID() : requestedId;
+        long now = System.currentTimeMillis();
+        try {
+            connection.setAutoCommit(false);
+            try {
+                Long actual = null;
+                try (PreparedStatement select = connection.prepareStatement("SELECT current_revision,owner_uuid FROM arc_spells WHERE spell_uuid=?")) {
+                    select.setString(1, spellId.toString());
+                    try (ResultSet row = select.executeQuery()) {
+                        if (row.next()) {
+                            if (!ownerId.toString().equals(row.getString(2))) throw new OwnershipMismatch();
+                            actual = row.getLong(1);
+                        }
+                    }
+                }
+                if (actual == null && expectedRevision > 0) throw new OptimisticConflict(0);
+                if (actual != null && actual != expectedRevision) throw new OptimisticConflict(actual);
+                long revision = actual == null ? 1 : actual + 1;
+                try (PreparedStatement upsert = connection.prepareStatement("""
+                        INSERT INTO arc_spells(spell_uuid,owner_uuid,name,current_revision,enabled,created_at,updated_at)
+                        VALUES(?,?,?,?,0,?,?) ON CONFLICT(spell_uuid) DO UPDATE SET
+                        name=excluded.name,current_revision=excluded.current_revision,updated_at=excluded.updated_at""")) {
+                    upsert.setString(1, spellId.toString()); upsert.setString(2, ownerId.toString()); upsert.setString(3, name);
+                    upsert.setLong(4, revision); upsert.setLong(5, now); upsert.setLong(6, now); upsert.executeUpdate();
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        "INSERT INTO arc_revisions(spell_uuid,revision,source,source_hash,bytecode,capabilities,created_at) VALUES(?,?,?,?,?,?,?)")) {
+                    insert.setString(1, spellId.toString()); insert.setLong(2, revision); insert.setString(3, source);
+                    insert.setString(4, hash); insert.setBytes(5, bytecode); insert.setString(6, capabilities); insert.setLong(7, now); insert.executeUpdate();
+                }
+                auditArcDeploy(UUID.randomUUID(), spellId, ownerId, expectedRevision, "DEPLOYED", hash, now);
+                connection.commit();
+                return new ArcSpellRevision(spellId, name, revision, false, source, hash, capabilities, now);
+            } catch (RuntimeException | SQLException error) {
+                connection.rollback(); throw error;
+            } finally { connection.setAutoCommit(true); }
+        } catch (SQLException error) { throw new IllegalStateException("Could not deploy ArcSys spell", error); }
+    }
+
+    synchronized List<ArcDeployAudit> arcDeployHistory(UUID ownerId, int limit) {
+        List<ArcDeployAudit> result = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT spell_uuid,requested_revision,result_code,source_hash,created_at
+                FROM arc_deploy_audit WHERE owner_uuid=? ORDER BY created_at DESC LIMIT ?""")) {
+            ps.setString(1, ownerId.toString()); ps.setInt(2, Math.max(1, Math.min(limit, 100)));
+            try (ResultSet rows = ps.executeQuery()) {
+                while (rows.next()) result.add(new ArcDeployAudit(
+                        rows.getString(1) == null ? null : UUID.fromString(rows.getString(1)), rows.getLong(2),
+                        rows.getString(3), rows.getString(4), rows.getLong(5)));
+            }
+            return result;
+        } catch (SQLException error) { throw new IllegalStateException("Could not read ArcSys audit", error); }
+    }
+
+    private void auditArcDeploy(UUID operationId, UUID spellId, UUID ownerId, long requestedRevision,
+                                String resultCode, String sourceHash, long at) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("INSERT INTO arc_deploy_audit VALUES(?,?,?,?,?,?,?)")) {
+            ps.setString(1, operationId.toString());
+            if (spellId == null) ps.setNull(2, Types.VARCHAR); else ps.setString(2, spellId.toString());
+            ps.setString(3, ownerId.toString()); ps.setLong(4, requestedRevision); ps.setString(5, resultCode);
+            if (sourceHash == null) ps.setNull(6, Types.VARCHAR); else ps.setString(6, sourceHash);
+            ps.setLong(7, at); ps.executeUpdate();
+        }
+    }
+
     private long count(String table, String column, UUID value) {
         try (PreparedStatement ps = connection.prepareStatement("SELECT COUNT(*) FROM " + table + " WHERE " + column + "=?")) {
             ps.setString(1, value.toString()); try (ResultSet rs = ps.executeQuery()) { return rs.next() ? rs.getLong(1) : 0; }
@@ -572,6 +688,10 @@ final class SpellDatabase implements AutoCloseable {
     @Override public synchronized void close() throws SQLException { connection.close(); }
     record NeutralStoneRecord(UUID instanceId, UUID ownerId, Circuit circuit, int usesRemaining, String issuer, long issuedAt) { }
     record StoreFragmentResult(boolean stored, int count, String code) { }
+    record ArcSpellSummary(UUID spellId, String name, long revision, boolean enabled, long updatedAt) { }
+    record ArcSpellRevision(UUID spellId, String name, long revision, boolean enabled, String source,
+                            String sourceHash, String capabilities, long createdAt) { }
+    record ArcDeployAudit(UUID spellId, long requestedRevision, String resultCode, String sourceHash, long createdAt) { }
     static final class OptimisticConflict extends RuntimeException { final long revision; OptimisticConflict(long revision) { this.revision = revision; } }
     static final class FragmentUnavailable extends RuntimeException { final UUID instanceId; FragmentUnavailable(UUID instanceId) { this.instanceId = instanceId; } }
     static final class FragmentStorageFull extends RuntimeException {

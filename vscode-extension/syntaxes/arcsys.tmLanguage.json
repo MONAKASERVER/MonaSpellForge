@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ArcSys",
+  "scopeName": "source.arcsys",
+  "patterns": [
+    { "include": "#comments" },
+    { "name": "keyword.control.arcsys", "match": "\\b(spell|module|use|fn|on|cast|pulse|hit|kill|damage_taken|let|const|state|if|else|match|for|in|repeat|break|continue|return)\\b" },
+    { "name": "constant.language.arcsys", "match": "\\b(true|false|none)\\b" },
+    { "name": "constant.numeric.arcsys", "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:t|s)?\\b" },
+    { "name": "string.quoted.double.arcsys", "begin": "\"", "end": "\"", "patterns": [{ "name": "constant.character.escape.arcsys", "match": "\\\\." }] },
+    { "name": "support.function.arcsys", "match": "\\b(mobs|spell|world|math|target)\\.[A-Za-z_][A-Za-z0-9_]*" },
+    { "name": "entity.name.type.spell.arcsys", "match": "(?<=\\bspell\\s)[A-Za-z_][A-Za-z0-9_]*" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.arcsys", "begin": "//", "end": "$" },
+        { "name": "comment.block.arcsys", "begin": "/\\*", "end": "\\*/" }
+      ]
+    }
+  }
+}

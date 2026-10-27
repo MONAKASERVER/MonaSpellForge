@@ -6,4 +6,4 @@ pluginManagement {
 }
 
 rootProject.name = "MonaSpellForge"
-include("shared", "paper", "fabric")
+include("shared", "paper", "fabric", "arcsys-language", "arcsys-compiler", "arcsys-vm", "arcsys-cli")
