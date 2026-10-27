@@ -16,6 +16,20 @@ runtime:
   minimum-tps: 17.0
   mana-capacity: 1000.0
   mana-regeneration-per-second: 10.0
+arc-runtime:
+  max-active-tasks: 1024
+  max-resumes-per-tick: 128
+  max-damage-per-effect: 200.0
+  max-target-range: 64.0
+  max-potion-duration-ticks: 600
+  max-display-duration-ticks: 200
+  # ArcSysからSkriptへ送れるイベント名。空なら完全無効。
+  skript-allowlist: []
+  contract:
+    max-effects-per-segment: 64
+    max-displays-per-segment: 8
+    max-pdc-writes-per-segment: 8
+    max-skript-signals-per-segment: 4
 particles:
   enabled: true
   # 1回の実行に許可する最大粒子数。反復・周期実行では実行ごとに適用。

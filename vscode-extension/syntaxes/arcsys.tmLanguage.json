@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ArcSys",
+  "scopeName": "source.arcsys",
+  "patterns": [
+    { "include": "#comments" },
+    { "name": "keyword.control.arcsys", "match": "\\b(spell|module|use|pub|private|fn|effect|struct|enum|type|trait|impl|on|cast|pulse|hit|kill|damage|death|damage_taken|enter|mana_below|spell_end|signal|projectile_impact|let|mut|const|state|if|else|match|guard|defer|for|in|repeat|break|continue|return|chance|wait|every|loop|foreach|parallel|await|after|atomic|transaction|visual|combat|requires|fragments|permission|ensures|persist|emit)\\b" },
+    { "name": "constant.language.arcsys", "match": "\\b(true|false|none)\\b" },
+    { "name": "constant.numeric.arcsys", "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:t|s|b|mp|%|d)?\\b" },
+    { "name": "string.quoted.double.arcsys", "begin": "\"", "end": "\"", "patterns": [{ "name": "constant.character.escape.arcsys", "match": "\\\\." }] },
+    { "name": "support.function.arcsys", "match": "\\b(mobs|spell|world|math|target)\\.[A-Za-z_][A-Za-z0-9_]*" },
+    { "name": "entity.name.type.spell.arcsys", "match": "(?<=\\bspell\\s)[A-Za-z_][A-Za-z0-9_]*" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.arcsys", "begin": "//", "end": "$" },
+        { "name": "comment.block.arcsys", "begin": "/\\*", "end": "\\*/" }
+      ]
+    }
+  }
+}

@@ -19,10 +19,12 @@ public final class MonaSpellForgeClient implements ClientModInitializer {
         PayloadTypeRegistry.clientboundPlay().register(BridgePayload.TYPE,BridgePayload.CODEC);
         ClientPlayNetworking.registerGlobalReceiver(BridgePayload.TYPE,(payload,context)->context.client().execute(()->receive(context.client(),payload.data())));
         ClientPlayConnectionEvents.JOIN.register((handler,sender,client)->send(new SpellForgeProtocol.Frame(SpellForgeProtocol.Type.HELLO,UUID.randomUUID(),"",null,0,"fabric-26.1.2")));
+        ClientPlayConnectionEvents.DISCONNECT.register((handler,client)->ArcSysDeveloperBridge.stopBridge());
     }
     private static void receive(net.minecraft.client.Minecraft client,byte[] data){
         try{
             var frame=SpellForgeProtocol.decode(data);
+            if(ArcSysDeveloperBridge.forward(frame))return;
             if(frame.type()==SpellForgeProtocol.Type.OPEN_EDITOR){
                 Circuit circuit=GSON.fromJson(frame.payload(),Circuit.class);
                 client.setScreen(new SpellForgeScreen(client.screen,circuit,frame.sessionToken()));
@@ -39,4 +41,5 @@ public final class MonaSpellForgeClient implements ClientModInitializer {
     static void send(SpellForgeProtocol.Frame frame){if(ClientPlayNetworking.canSend(BridgePayload.TYPE))ClientPlayNetworking.send(new BridgePayload(SpellForgeProtocol.encode(frame)));}
     static String json(Object object){return GSON.toJson(object);}
     static <T> T fromJson(String json,Class<T> type){return GSON.fromJson(json,type);}
+    static Gson gson(){return GSON;}
 }

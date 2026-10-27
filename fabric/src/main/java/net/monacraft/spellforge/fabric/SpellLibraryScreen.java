@@ -79,7 +79,7 @@ final class SpellLibraryScreen extends Screen {
 
         int y = top + panelHeight() - 31;
         int gap = 5;
-        int buttonWidth = (panelWidth() - 48 - gap * 5) / 6;
+        int buttonWidth = (panelWidth() - 48 - gap * 6) / 7;
         int x = left + 24;
         addRenderableWidget(Button.builder(Component.literal("新しい魔術"), ignored -> createCircuit())
                 .bounds(x, y, buttonWidth, 20).build());
@@ -91,8 +91,10 @@ final class SpellLibraryScreen extends Screen {
                 .bounds(x + (buttonWidth + gap) * 3, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.literal("更新"), ignored -> requestRefresh())
                 .bounds(x + (buttonWidth + gap) * 4, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("閉じる"), ignored -> onClose())
+        addRenderableWidget(Button.builder(Component.literal("VS Code"), ignored -> openDeveloperBridge())
                 .bounds(x + (buttonWidth + gap) * 5, y, buttonWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("閉じる"), ignored -> onClose())
+                .bounds(x + (buttonWidth + gap) * 6, y, buttonWidth, 20).build());
         refreshSelectionState();
     }
 
@@ -141,6 +143,12 @@ final class SpellLibraryScreen extends Screen {
         send(SpellForgeProtocol.Type.CIRCUIT_CREATE_REQ, null);
         status = Component.literal("新しい魔術を準備しています…");
         statusColor = WARNING;
+    }
+
+    private void openDeveloperBridge() {
+        String code = ArcSysDeveloperBridge.start(minecraft, token);
+        status = Component.literal("VS Codeペアリングコード: " + code + "（10分間有効・一度だけ使用）");
+        statusColor = SUCCESS;
     }
 
     private void editSelected() {

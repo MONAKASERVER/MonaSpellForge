@@ -1,0 +1,71 @@
+{
+  "name": "arcsys-vscode",
+  "displayName": "ArcSys 2.0 — Magic Engine",
+  "description": "MonaSpellForge ArcSys language tools and authenticated Fabric bridge",
+  "version": "2.0.0-alpha.1",
+  "publisher": "monaka-server",
+  "repository": { "type": "git", "url": "https://github.com/MONAKASERVER/MonaSpellForge.git" },
+  "license": "MIT",
+  "engines": { "vscode": "^1.95.0" },
+  "categories": ["Programming Languages", "Debuggers"],
+  "activationEvents": ["onLanguage:arcsys", "onView:arcsys.studio"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "arcsys",
+      "aliases": ["ArcSys", "arcsys"],
+      "extensions": [".arc"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "arcsys",
+      "scopeName": "source.arcsys",
+      "path": "./syntaxes/arcsys.tmLanguage.json"
+    }],
+    "commands": [
+      { "command": "arcsys.connect", "title": "ArcSys: Connect to Minecraft" },
+      { "command": "arcsys.openSpell", "title": "ArcSys: Open Spell from Minecraft" },
+      { "command": "arcsys.compile", "title": "ArcSys: Compile Current Spell" },
+      { "command": "arcsys.validate", "title": "ArcSys: Validate Spell" },
+      { "command": "arcsys.deploy", "title": "ArcSys: Deploy Spell to Minecraft" },
+      { "command": "arcsys.simulate", "title": "ArcSys: Run Simulation" },
+      { "command": "arcsys.openGraph", "title": "ArcSys: Open Node Graph" },
+      { "command": "arcsys.debug", "title": "ArcSys: Start Debugging" },
+      { "command": "arcsys.debugContinue", "title": "ArcSys: Continue Debugging" },
+      { "command": "arcsys.debugStep", "title": "ArcSys: Step Instruction" },
+      { "command": "arcsys.debugStop", "title": "ArcSys: Stop Debugging" },
+      { "command": "arcsys.logs", "title": "ArcSys: View ArcVM Logs" },
+      { "command": "arcsys.disconnect", "title": "ArcSys: Disconnect" }
+    ],
+    "viewsContainers": {
+      "activitybar": [{ "id": "arcsys", "title": "ArcSys Studio", "icon": "media/arcsys.svg" }]
+    },
+    "views": { "arcsys": [{ "id": "arcsys.studio", "name": "ArcSys Studio" }] },
+    "configuration": {
+      "title": "ArcSys",
+      "properties": {
+        "arcsys.bridge.port": { "type": "number", "default": 27128, "minimum": 1024, "maximum": 65535, "description": "Fabric Mod localhost bridge port" },
+        "arcsys.bridge.timeoutMs": { "type": "number", "default": 8000, "minimum": 1000, "maximum": 30000 }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "package": "npm run compile && vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/vscode": "^1.95.0",
+    "@types/ws": "^8.18.1",
+    "@vscode/vsce": "^3.6.2",
+    "typescript": "^5.9.3"
+  }
+}

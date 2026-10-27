@@ -7,6 +7,8 @@ java { toolchain.languageVersion.set(JavaLanguageVersion.of(25)) }
 
 dependencies {
     implementation(project(":shared"))
+    implementation(project(":arcsys-compiler"))
+    implementation(project(":arcsys-vm"))
     compileOnly("io.papermc.paper:paper-api:26.1.2.build.74-stable")
     compileOnly("com.github.MilkBowl:VaultAPI:1.7.1")
     implementation("org.xerial:sqlite-jdbc:3.51.1.0")

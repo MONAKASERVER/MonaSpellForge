@@ -10,4 +10,7 @@ out/
 *.sqlite-shm
 *.sqlite-wal
 run/
+node_modules/
+*.tsbuildinfo
+*.vsix
 

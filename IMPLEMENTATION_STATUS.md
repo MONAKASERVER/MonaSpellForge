@@ -69,3 +69,33 @@
 - 設定YAMLからのホットリロード可能な全パラメータ差し替え
 
 ビルド成功のみで実サーバー動作確認済みとは扱っていません。
+
+# MonaSpellForge 2.0 implementation status
+
+## 2.0.0-alpha.1
+
+Implemented and covered by automated tests:
+
+- Java 25 ArcSys lexer, parser and immutable AST.
+- Closed deterministic ArcVM bytecode compiler and capability discovery.
+- Fuel, stack, list, string and effect bounded VM with no reflection, file, process, SQL or network API.
+- Offline `arcsys check`, `compile` and `disasm` CLI.
+- Additive SQLite Arc spell/revision/deploy-audit storage with optimistic revision conflicts.
+- Paper-authoritative compile, validation, deployment and bounded simulation.
+- Append-only v1 custom-payload protocol additions.
+- Fabric loopback-only WebSocket bridge with explicit in-game pairing code, TTL, one client, size/rate limits and disconnect revocation.
+- VS Code `.arc` language registration, TextMate grammar, LSP diagnostics/completion/hover/definition/formatting.
+- VS Code command set and ArcSys Studio tree.
+
+Feature-gated / not represented as complete:
+
+- Bidirectional lossless conversion for every legacy 5×5 node.
+- Graphical VS Code node editor.
+- Cross-proxy verification and production load/fuzz certification.
+- ArcSys-only fragments in loot/gacha.
+
+Production remains on the stable 1.7 line until the release-candidate migration and operational tests pass.
+
+## Advanced language specification follow-up
+
+The advanced ArcSys and Minecraft API specifications are accepted, but are not yet production-complete. The development branch now includes dimension-aware types, local/effect functions, global contract pre/postconditions, match expressions, state/requirement metadata, expanded events, Skript-style control sugar, lexically scoped LIFO `defer` cleanup, runtime-tagged Option/Result values with payload pattern matching and `?` propagation, resumable wait/after continuations with bounded cooperative tick scheduling, deterministic parallel all/any and race groups with aggregate budgets, typed TTL/schema-version persistence connected to a Paper main-thread ArcVM host, bounded live combat/Display/raycast/PDC effects, an allowlisted bidirectional Skript boundary, optional WorldGuard/MythicMobs adapters and a pause/step/watch bytecode debugger. Remaining blockers include named contract composition, source maps/profiler counters, virtual structures, full generic propagation, fuzz/proxy/rollback drills, sustained live load and actual Java/Bedrock client verification. See `docs/advanced-spec-coverage.md`.

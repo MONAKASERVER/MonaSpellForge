@@ -1,6 +1,6 @@
 allprojects {
     group = "net.monacraft.spellforge"
-    version = "1.7.0"
+    version = "2.0.0-alpha.1"
 
     repositories {
         mavenCentral()
@@ -15,9 +15,14 @@ subprojects {
         options.encoding = "UTF-8"
         options.release.set(25)
     }
-    tasks.withType<Test>().configureEach { useJUnitPlatform() }
+    tasks.withType<Test>().configureEach {
+        useJUnitPlatform()
+        // Keep CI and Windows developer machines from reserving a 512 MiB G1 heap per test worker.
+        maxHeapSize = "128m"
+        jvmArgs("-XX:+UseSerialGC")
+    }
 }
 
 tasks.register("dist") {
-    dependsOn(":paper:shadowJar", ":fabric:remapJar")
+    dependsOn(":paper:shadowJar", ":fabric:remapJar", ":arcsys-cli:distZip")
 }

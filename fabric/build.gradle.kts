@@ -13,6 +13,8 @@ dependencies {
     implementation("net.fabricmc.fabric-api:fabric-api:${property("fabric_api_version")}")
     implementation(project(":shared"))
     include(project(":shared"))
+    implementation("org.java-websocket:Java-WebSocket:1.6.0")
+    include("org.java-websocket:Java-WebSocket:1.6.0")
     testImplementation(platform("org.junit:junit-bom:5.13.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

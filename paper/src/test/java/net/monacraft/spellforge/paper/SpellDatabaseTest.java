@@ -111,4 +111,37 @@ class SpellDatabaseTest {
             assertTrue(database.storedFragments(owner).isEmpty());
         }
     }
+
+    @Test void arcDeployCreatesImmutableRevisionsAndRejectsStaleBase() throws Exception {
+        UUID owner = UUID.randomUUID();
+        try (SpellDatabase database = new SpellDatabase(temp.resolve("arc.sqlite"))) {
+            byte[] firstCode = {1, 2, 3};
+            var first = database.deployArcSpell(owner, null, 0, "Example", "spell Example {}", "hash-1", firstCode, "math", "");
+            assertEquals(1, first.revision());
+            assertEquals("spell Example {}", database.arcSpell(first.spellId(), owner).orElseThrow().source());
+            var second = database.deployArcSpell(owner, first.spellId(), 1, "Example", "spell Example { on cast {} }", "hash-2", new byte[]{4}, "math", "");
+            assertEquals(2, second.revision());
+            assertThrows(SpellDatabase.OptimisticConflict.class, () -> database.deployArcSpell(owner, first.spellId(), 1,
+                    "Example", "stale", "hash-stale", new byte[]{5}, "math", ""));
+            assertEquals(2, database.arcSpell(first.spellId(), owner).orElseThrow().revision());
+            assertEquals(2, database.arcSpells(owner).getFirst().revision());
+        }
+    }
+
+    @Test void persistentArcStateHonorsTypeTtlMigrationAndPlayerErasure() throws Exception {
+        UUID owner = UUID.randomUUID(), spell = UUID.randomUUID();
+        long now = System.currentTimeMillis();
+        try (SpellDatabase database = new SpellDatabase(temp.resolve("arc-state.sqlite"))) {
+            database.putArcState(owner, spell, "hits", "PLAYER", 12L, 1, now + 10_000);
+            var first = database.arcState(owner, spell, "hits", "PLAYER", now).orElseThrow();
+            assertEquals("INT", first.type()); assertEquals(12L, first.value()); assertEquals(1, first.schemaVersion());
+            database.putArcState(owner, spell, "hits", "PLAYER", 14L, 2, now + 20_000);
+            assertEquals(2, database.arcState(owner, spell, "hits", "PLAYER", now).orElseThrow().schemaVersion());
+            database.putArcState(owner, spell, "expired", "SPELL", true, 1, now + 30_000);
+            assertTrue(database.arcState(owner, spell, "expired", "SPELL", now + 30_001).isEmpty());
+            database.putArcState(owner, spell, "name", "SPELL", "arc", 1, null);
+            assertEquals(2, database.eraseArcStateOwner(owner));
+            assertTrue(database.arcState(owner, spell, "hits", "PLAYER", now).isEmpty());
+        }
+    }
 }
