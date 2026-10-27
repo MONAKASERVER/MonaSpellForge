@@ -231,16 +231,31 @@ final class NeutralMagicStoneService implements Listener {
             UUID instance = UUID.fromString(instanceRaw);
             UUID owner = UUID.fromString(ownerRaw);
             if (expectedOwner != null && !owner.equals(expectedOwner.getUniqueId())) return new Validation(true, false, "OWNER", null);
+            String signedCircuit = Objects.requireNonNullElse(circuitRaw, "");
+            long signedRevision = Objects.requireNonNullElse(revision, 0L);
+            boolean signed = integrity.verifyPayload(signature, "neutral-stone-v1", SCHEMA, instance, owner,
+                    signedCircuit, signedRevision, uses, issuedAt);
+            if (!signed) return new Validation(true, false, "SIGNATURE", null);
             SpellDatabase.NeutralStoneRecord record = database.neutralStone(instance).orElse(null);
+            if (record == null) {
+                Circuit recoveredCircuit = null;
+                if (!signedCircuit.isEmpty()) {
+                    recoveredCircuit = circuits.getCircuit(UUID.fromString(signedCircuit))
+                            .filter(value -> value.ownerId().equals(owner) && value.revision() == signedRevision).orElse(null);
+                    if (recoveredCircuit == null) return new Validation(true, false, "CIRCUIT", null);
+                } else if (signedRevision != 0L) return new Validation(true, false, "CIRCUIT", null);
+                if (!database.recoverSignedNeutralStone(instance, owner, uses, issuedAt, recoveredCircuit)) {
+                    return new Validation(true, false, "LEDGER", null);
+                }
+                record = database.neutralStone(instance).orElse(null);
+            }
             if (record == null || !record.ownerId().equals(owner) || record.usesRemaining() != uses || record.usesRemaining() < 1
                     || record.issuedAt() != issuedAt) return new Validation(true, false, "LEDGER", record);
             String expectedCircuit = record.circuit() == null ? "" : record.circuit().circuitId().toString();
             long expectedRevision = record.circuit() == null ? 0L : record.circuit().revision();
             if (!Objects.equals(Objects.requireNonNullElse(circuitRaw, ""), expectedCircuit)
                     || Objects.requireNonNullElse(revision, 0L) != expectedRevision) return new Validation(true, false, "CIRCUIT", record);
-            boolean signed = integrity.verifyPayload(signature, "neutral-stone-v1", SCHEMA, instance, owner,
-                    expectedCircuit, expectedRevision, uses, issuedAt);
-            return new Validation(true, signed, signed ? "OK" : "SIGNATURE", record);
+            return new Validation(true, true, "OK", record);
         } catch (RuntimeException error) { return new Validation(true, false, "MALFORMED", null); }
     }
 

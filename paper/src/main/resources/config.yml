@@ -32,6 +32,11 @@ editor:
   session-timeout-seconds: 900
   max-packets-per-second: 20
   max-packet-bytes: 30000
+web-editor:
+  enabled: true
+  api-base: https://www.monacraft.net
+  public-url: https://node.monacraft.net/
+  server-secret: ''
 hud:
   enabled: true
   update-interval-ticks: 10

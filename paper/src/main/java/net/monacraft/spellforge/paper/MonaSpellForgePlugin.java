@@ -20,6 +20,7 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
     private StatusHud hud;
     private DefaultSpellService spells;
     private EditorGui editor;
+    private WebEditorBridge webEditor;
 
     @Override public void onEnable() {
         try {
@@ -41,9 +42,10 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
             if (getConfig().getBoolean("hud.enabled", true)) hud = new StatusHud(this, mana,
                     getConfig().getLong("hud.update-interval-ticks", 10), getConfig().getDouble("hud.vanilla-health-scale", 20.0));
             spells = new DefaultSpellService(this,database,compiler,mana,new TickBudgetManager(getConfig().getDouble("runtime.minimum-tps",17),getConfig().getInt("runtime.max-runtime-cost",512)));
-            editor = new EditorGui(fragments,circuits,embedding,spells);
+            editor = new EditorGui(fragments,circuits,embedding,spells,database);
             UpgradeService upgrades = new UpgradeService(this,fragments,database);
             ProtocolBridge bridge = new ProtocolBridge(this,circuits,fragments,embedding,database,spells);
+            webEditor = new WebEditorBridge(this,circuits,fragments,embedding,database,catalog);
             NeutralMagicStoneService stones = new NeutralMagicStoneService(this,circuits,spells,database,integrity);
             FragmentStorageService fragmentStorage = new FragmentStorageService(fragments,database);
             SwordSpellService swords = new SwordSpellService(this,circuits,spells,integrity);
@@ -59,15 +61,15 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
             Bukkit.getPluginManager().registerEvents(upgrades,this);
             getServer().getMessenger().registerIncomingPluginChannel(this,ProtocolBridge.CHANNEL,bridge);
             getServer().getMessenger().registerOutgoingPluginChannel(this,ProtocolBridge.CHANNEL);
-            MsfCommand commands=new MsfCommand(this,fragments,circuits,spells,editor,bridge,upgrades,stones,swords,database);
+            MsfCommand commands=new MsfCommand(this,fragments,circuits,spells,editor,bridge,webEditor,upgrades,stones,swords,database);
             getCommand("msf").setExecutor(commands);getCommand("msf").setTabCompleter(commands);
             Bukkit.getScheduler().runTaskTimer(this,()->editor.cleanup(getConfig().getLong("editor.session-timeout-seconds",900)*1000L),1200L,1200L);
-            getLogger().info("MonaSpellForge enabled: 69 fragments, protocol v1, database ready");
+            getLogger().info("MonaSpellForge enabled: 70 fragments, protocol v1, database ready");
         } catch (Exception error) {
             getLogger().severe("MonaSpellForge could not start: "+error.getMessage());error.printStackTrace();Bukkit.getPluginManager().disablePlugin(this);
         }
     }
-    @Override public void onDisable(){if(spells!=null)spells.cancelAll();if(hud!=null)hud.close();if(mana!=null)mana.close();if(database!=null)try{database.close();}catch(Exception e){getLogger().warning("DB close failed: "+e.getMessage());}}
+    @Override public void onDisable(){if(webEditor!=null)webEditor.close();if(spells!=null)spells.cancelAll();if(hud!=null)hud.close();if(mana!=null)mana.close();if(database!=null)try{database.close();}catch(Exception e){getLogger().warning("DB close failed: "+e.getMessage());}}
     private void saveResourceIfMissing(String name){if(!new File(getDataFolder(),name).exists())saveResource(name,false);}
     private void ensureSecret() throws Exception {
         if(!getConfig().getString("security.hmac-secret","").isBlank())return;

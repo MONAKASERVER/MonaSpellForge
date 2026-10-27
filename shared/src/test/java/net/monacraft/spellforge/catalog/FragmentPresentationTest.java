@@ -13,13 +13,13 @@ class FragmentPresentationTest {
     @Test
     void coversEveryCatalogFragmentWithAColoredUniqueName() {
         FragmentCatalog catalog = FragmentCatalog.defaults();
-        assertEquals(69, FragmentPresentation.all().size());
+        assertEquals(70, FragmentPresentation.all().size());
         assertEquals(catalog.ids(), FragmentPresentation.all().keySet());
 
         Set<String> names = FragmentPresentation.all().values().stream()
                 .map(FragmentPresentation.Entry::plainName)
                 .collect(Collectors.toSet());
-        assertEquals(69, names.size());
+        assertEquals(70, names.size());
         FragmentPresentation.all().values().forEach(entry -> {
             assertTrue(entry.legacyName().matches(".*&[0-9a-f].*"), entry.id());
             assertFalse(entry.description().isBlank(), entry.id());

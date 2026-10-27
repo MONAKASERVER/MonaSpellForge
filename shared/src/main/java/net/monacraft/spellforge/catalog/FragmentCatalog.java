@@ -11,7 +11,7 @@ public final class FragmentCatalog {
     public static final List<String> SHAPES = List.of("PROJECTILE", "BEAM", "WAVE", "BURST", "BARRIER", "RING", "LINE", "SIGIL");
     public static final List<String> TARGETS = List.of("LOOK_TARGET", "NEAREST_ENEMY", "AREA_TARGETS", "SELF", "ALLIES");
     public static final List<String> MODIFIERS = List.of("POWER", "VELOCITY", "RANGE", "DURATION", "PIERCE", "HOMING", "SPLIT", "AREA_SCALE", "EFFICIENCY",
-            "AMPLIFY_X2", "AMPLIFY_X3", "AMPLIFY_X4");
+            "AMPLIFY_X2", "AMPLIFY_X3", "AMPLIFY_X4", "CIRCUIT_SPEED");
     public static final List<String> LOGIC = List.of("FORK", "MERGE_ANY", "MERGE_ALL", "IF", "AND", "OR", "NOT", "DELAY", "REPEAT", "COMPARE",
             "MOB_SENSOR", "AUTOMATION", "CHAIN", "CALL", "SPELL_VARIABLE", "COUNTER", "MAGIC_GATE", "SEQUENCE", "CHAOS", "MEMORY_CORE",
             "RETURN_CIRCUIT", "PARALLEL", "MULTI_BRANCH", "ENVIRONMENT_OBSERVER", "TIMER", "PERIODIC_SIGNAL");
@@ -24,7 +24,7 @@ public final class FragmentCatalog {
         for (FragmentDefinition definition : definitions) {
             if (map.putIfAbsent(definition.id(), definition) != null) throw new IllegalArgumentException("Duplicate fragment: " + definition.id());
         }
-        if (map.size() != 69) throw new IllegalArgumentException("Catalog must contain exactly 69 fragments, got " + map.size());
+        if (map.size() != 70) throw new IllegalArgumentException("Catalog must contain exactly 70 fragments, got " + map.size());
         this.definitions = Map.copyOf(map);
         this.version = version;
     }
@@ -35,17 +35,17 @@ public final class FragmentCatalog {
     public long version() { return version; }
 
     public static FragmentCatalog defaults() {
-        List<FragmentDefinition> all = new ArrayList<>(69);
+        List<FragmentDefinition> all = new ArrayList<>(70);
         TRIGGERS.forEach(id -> all.add(definition(id, Category.TRIGGER, 3)));
         ELEMENTS.forEach(id -> all.add(definition(id, Category.ELEMENT, switch (id) { case "GRAVITY", "HEAL", "ARCANE" -> 5; default -> 4; })));
         SHAPES.forEach(id -> all.add(definition(id, Category.SHAPE, switch (id) { case "PROJECTILE", "BURST" -> 5; default -> 4; })));
         TARGETS.forEach(id -> all.add(definition(id, Category.TARGET, 3)));
-        MODIFIERS.forEach(id -> all.add(definition(id, Category.MODIFIER, 5)));
+        MODIFIERS.forEach(id -> all.add(definition(id, Category.MODIFIER, id.equals("CIRCUIT_SPEED") ? 4 : 5)));
         LOGIC.forEach(id -> all.add(definition(id, Category.LOGIC, switch (id) {
             case "REPEAT", "DELAY", "FORK", "TIMER", "PERIODIC_SIGNAL", "RETURN_CIRCUIT" -> 5;
             default -> 3;
         })));
-        return new FragmentCatalog(all, 2);
+        return new FragmentCatalog(all, 3);
     }
 
     private static FragmentDefinition definition(String id, Category category, int maxLevel) {
@@ -55,7 +55,11 @@ public final class FragmentCatalog {
         double baseMana = switch (category) { case TRIGGER -> 2; case ELEMENT -> 12; case SHAPE -> 8; case TARGET -> 5; case MODIFIER -> 7; case LOGIC -> 9; };
         int baseRuntime = switch (category) { case TRIGGER, TARGET -> 1; case ELEMENT, SHAPE, MODIFIER -> 3; case LOGIC -> 4; };
         for (int level = 1; level <= maxLevel; level++) {
-            levels.put(level, new LevelParameters(basePower * (1 + (level - 1) * 0.28), 12 + level * 6,
+            if (id.equals("CIRCUIT_SPEED")) {
+                double speedMultiplier = level * 2.0;
+                levels.put(level, new LevelParameters(speedMultiplier, 0, 0,
+                        18.0 * level, 12 * level));
+            } else levels.put(level, new LevelParameters(basePower * (1 + (level - 1) * 0.28), 12 + level * 6,
                     2 + level * 1.5, baseMana * (1 + (level - 1) * 0.35), baseRuntime + level - 1));
         }
         String rarity = switch (maxLevel) { case 5 -> "EPIC"; case 4 -> "RARE"; default -> "UNCOMMON"; };

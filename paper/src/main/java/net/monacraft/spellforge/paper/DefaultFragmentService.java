@@ -77,7 +77,9 @@ final class DefaultFragmentService implements FragmentService {
             if (expectedOwner != null && !ownerId.equals(expectedOwner.getUniqueId())) return ValidationResult.failure("OWNER_MISMATCH");
             if (!integrity.verify(tag, schema, instanceId, definition.id(), level, ownerId, issuer, issuedAt)) return ValidationResult.failure("SIGNATURE_INVALID");
             FragmentInstance instance = new FragmentInstance(instanceId, definition.id(), level, ownerId, issuer, Instant.ofEpochMilli(issuedAt));
-            if (!database.isIssued(instance)) return ValidationResult.failure("NOT_IN_ISSUANCE_LEDGER");
+            if (!database.isIssued(instance) && !database.recoverSignedIssuance(instance)) {
+                return ValidationResult.failure("NOT_IN_ISSUANCE_LEDGER");
+            }
             return ValidationResult.success(instance);
         } catch (RuntimeException error) { return ValidationResult.failure("MALFORMED_PDC"); }
     }

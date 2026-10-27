@@ -117,6 +117,33 @@ final class SpellDatabase implements AutoCloseable {
         } catch (SQLException ignored) { return false; }
     }
 
+    /** Restores a valid HMAC-signed item when its issuance row predates ledger persistence. */
+    synchronized boolean recoverSignedIssuance(FragmentInstance instance) {
+        try {
+            try (PreparedStatement existing = connection.prepareStatement(
+                    "SELECT 1 FROM fragment_issuance WHERE instance_uuid=?")) {
+                existing.setString(1, instance.instanceId().toString());
+                try (ResultSet result = existing.executeQuery()) {
+                    if (result.next()) return isIssued(instance);
+                }
+            }
+            try (PreparedStatement insert = connection.prepareStatement("""
+                    INSERT INTO fragment_issuance(instance_uuid,owner_uuid,fragment_id,level,issuer,source,issued_at,revoked_at,consumed_circuit_uuid,consumed_at)
+                    VALUES(?,?,?,?,?,'signed-item-recovery',?,NULL,NULL,NULL)""")) {
+                insert.setString(1, instance.instanceId().toString());
+                insert.setString(2, instance.ownerId().toString());
+                insert.setString(3, instance.fragmentId());
+                insert.setInt(4, instance.level());
+                insert.setString(5, instance.issuer());
+                insert.setLong(6, instance.issuedAt().toEpochMilli());
+                insert.executeUpdate();
+            }
+            return true;
+        } catch (SQLException error) {
+            return false;
+        }
+    }
+
     synchronized List<Circuit> circuits(UUID ownerId) {
         List<Circuit> result = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("SELECT circuit_json FROM circuits WHERE owner_uuid=? ORDER BY updated_at DESC")) {
@@ -214,7 +241,8 @@ final class SpellDatabase implements AutoCloseable {
         } catch (SQLException error) { throw new IllegalStateException(error); }
     }
 
-    synchronized Circuit saveEmbedded(Circuit circuit, long expectedRevision, Set<UUID> newlyEmbedded) {
+    synchronized Circuit saveEmbedded(Circuit circuit, long expectedRevision, Set<UUID> newlyEmbedded,
+                                      Collection<CircuitNode> returnedNodes) {
         try {
             connection.setAutoCommit(false);
             try {
@@ -229,6 +257,33 @@ final class SpellDatabase implements AutoCloseable {
                 if (actual != null && !circuit.ownerId().toString().equals(actualOwner)) throw new OwnershipMismatch();
                 if (actual != null && actual != expectedRevision) throw new OptimisticConflict(actual);
                 long now = System.currentTimeMillis();
+                Map<String, Integer> returnCounts = new HashMap<>();
+                for (CircuitNode node : returnedNodes) returnCounts.merge(node.fragmentId(), 1, Integer::sum);
+                for (Map.Entry<String, Integer> entry : returnCounts.entrySet()) {
+                    if (storedFragmentCount(circuit.ownerId(), entry.getKey()) + entry.getValue() > 255) {
+                        throw new FragmentStorageFull(entry.getKey());
+                    }
+                }
+                for (CircuitNode node : returnedNodes) {
+                    try (PreparedStatement release = connection.prepareStatement("""
+                            UPDATE fragment_issuance SET consumed_circuit_uuid=NULL,consumed_at=NULL
+                            WHERE instance_uuid=? AND owner_uuid=? AND consumed_circuit_uuid=? AND consumed_at IS NOT NULL""")) {
+                        release.setString(1, node.fragmentInstanceId().toString());
+                        release.setString(2, circuit.ownerId().toString());
+                        release.setString(3, circuit.circuitId().toString());
+                        if (release.executeUpdate() != 1) throw new FragmentUnavailable(node.fragmentInstanceId());
+                    }
+                    try (PreparedStatement store = connection.prepareStatement("""
+                            INSERT INTO stored_fragments(instance_uuid,owner_uuid,fragment_id,level,stored_at)
+                            VALUES(?,?,?,?,?)""")) {
+                        store.setString(1, node.fragmentInstanceId().toString());
+                        store.setString(2, circuit.ownerId().toString());
+                        store.setString(3, node.fragmentId());
+                        store.setInt(4, node.level());
+                        store.setLong(5, now);
+                        store.executeUpdate();
+                    }
+                }
                 for (UUID instanceId : newlyEmbedded) {
                     try (PreparedStatement consume = connection.prepareStatement("""
                             UPDATE fragment_issuance SET consumed_circuit_uuid=?,consumed_at=?
@@ -439,6 +494,28 @@ final class SpellDatabase implements AutoCloseable {
         } catch (SQLException error) { throw new IllegalStateException("Could not read neutral stone", error); }
     }
 
+    synchronized boolean recoverSignedNeutralStone(UUID instanceId, UUID ownerId, int uses, long issuedAt, Circuit circuit) {
+        if (uses < 1 || uses > 5) return false;
+        try {
+            if (neutralStone(instanceId).isPresent()) return true;
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO neutral_stones(instance_uuid,owner_uuid,circuit_uuid,circuit_revision,circuit_json,
+                      uses_remaining,issuer,issued_at,updated_at) VALUES(?,?,?,?,?,?,'signed-item-recovery',?,?)""")) {
+                statement.setString(1, instanceId.toString());
+                statement.setString(2, ownerId.toString());
+                if (circuit == null) {
+                    statement.setNull(3, Types.VARCHAR); statement.setNull(4, Types.BIGINT); statement.setNull(5, Types.VARCHAR);
+                } else {
+                    statement.setString(3, circuit.circuitId().toString()); statement.setLong(4, circuit.revision());
+                    statement.setString(5, gson.toJson(circuit));
+                }
+                statement.setInt(6, uses); statement.setLong(7, issuedAt); statement.setLong(8, System.currentTimeMillis());
+                statement.executeUpdate();
+                return true;
+            }
+        } catch (SQLException error) { return false; }
+    }
+
     synchronized boolean bindNeutralStone(UUID instanceId, UUID ownerId, Circuit circuit) {
         try (PreparedStatement statement = connection.prepareStatement("""
                 UPDATE neutral_stones SET circuit_uuid=?,circuit_revision=?,circuit_json=?,updated_at=?
@@ -497,5 +574,9 @@ final class SpellDatabase implements AutoCloseable {
     record StoreFragmentResult(boolean stored, int count, String code) { }
     static final class OptimisticConflict extends RuntimeException { final long revision; OptimisticConflict(long revision) { this.revision = revision; } }
     static final class FragmentUnavailable extends RuntimeException { final UUID instanceId; FragmentUnavailable(UUID instanceId) { this.instanceId = instanceId; } }
+    static final class FragmentStorageFull extends RuntimeException {
+        final String fragmentId;
+        FragmentStorageFull(String fragmentId) { this.fragmentId = fragmentId; }
+    }
     static final class OwnershipMismatch extends RuntimeException { }
 }

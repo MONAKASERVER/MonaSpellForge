@@ -41,9 +41,14 @@ final class FragmentStorageService implements Listener {
             return;
         }
 
-        event.getPlayer().getInventory().setItemInMainHand(new ItemStack(Material.AIR));
+        if (held.getAmount() <= 1) {
+            event.getPlayer().getInventory().setItemInMainHand(new ItemStack(Material.AIR));
+        } else {
+            held.setAmount(held.getAmount() - 1);
+            event.getPlayer().getInventory().setItemInMainHand(held);
+        }
         event.getPlayer().sendActionBar(Component.text(
-                validation.instance().fragmentId() + " を魔術保管庫へ格納しました（" + result.count() + "/255）",
+                validation.instance().fragmentId() + " を所持ノードへ格納しました（" + result.count() + "/255）",
                 NamedTextColor.AQUA));
         event.getPlayer().playSound(event.getPlayer().getLocation(), Sound.BLOCK_AMETHYST_BLOCK_RESONATE, 0.8f, 1.4f);
     }

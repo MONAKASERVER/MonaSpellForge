@@ -28,11 +28,14 @@ final class EditorGui implements Listener {
     private final CircuitService circuits;
     private final CircuitEmbeddingService embedding;
     private final DefaultSpellService spells;
+    private final SpellDatabase database;
     private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
     private final Map<UUID, DeleteConfirmation> pendingDeletes = new ConcurrentHashMap<>();
 
-    EditorGui(FragmentService fragments, CircuitService circuits, CircuitEmbeddingService embedding, DefaultSpellService spells) {
+    EditorGui(FragmentService fragments, CircuitService circuits, CircuitEmbeddingService embedding,
+              DefaultSpellService spells, SpellDatabase database) {
         this.fragments = fragments; this.circuits = circuits; this.embedding = embedding; this.spells = spells;
+        this.database = database;
     }
 
     void open(Player player) {
@@ -106,14 +109,14 @@ final class EditorGui implements Listener {
             int gridIndex = index;
             CircuitNode node = session.circuit.nodes().stream().filter(n -> n.slotIndex() == gridIndex).findFirst().orElse(null);
             if (node == null) inventory.setItem(GRID[index], item(Material.GRAY_STAINED_GLASS_PANE, "空きスロット " + (index + 1), NamedTextColor.DARK_GRAY,
-                    List.of("カーソルに欠片を持ってクリック", "右クリック: 配置済みノードを削除")));
+                    List.of("カーソルの欠片、または所持ノードを配置", "右クリック: 配置済みノードをしまう")));
             else {
                 FragmentDefinition definition = fragments.getDefinition(node.fragmentId());
                 Material material = definition == null ? Material.BARRIER : Optional.ofNullable(Material.matchMaterial(definition.displayItem())).orElse(Material.AMETHYST_SHARD);
                 FragmentPresentation.Entry presentation = FragmentPresentation.get(node.fragmentId());
                 inventory.setItem(GRID[index], item(material, presentation.plainName() + " Lv." + node.level(), color(definition == null ? "" : definition.rarity()),
                         List.of(presentation.description(), "原典識別: " + node.fragmentId(),
-                                "ノード " + node.nodeId().toString().substring(0, 8), "右クリック: 削除")));
+                                "ノード " + node.nodeId().toString().substring(0, 8), "右クリック: 所持ノードへしまう")));
             }
         }
         var validation = circuits.validate(session.circuit);
@@ -123,7 +126,13 @@ final class EditorGui implements Listener {
                 validation.valid() ? List.of("有効な回路です") : validation.issues().stream().limit(5).map(i -> i.code() + ": " + i.message()).toList()));
         inventory.setItem(49, item(Material.WRITABLE_BOOK, "保存して有効化", NamedTextColor.GOLD, List.of("新しく装着した欠片を消費して回路へ封入")));
         inventory.setItem(51, item(Material.BLAZE_ROD, "テスト発動", NamedTextColor.LIGHT_PURPLE, List.of("保存中の回路を手動発動します")));
-        inventory.setItem(53, item(Material.CHEST, "欠片の配置方法", NamedTextColor.YELLOW, List.of("インベントリ内の欠片をカーソルで持ち", "中央5×5の空き枠をクリック", "保存時に欠片を消費・封入します")));
+        List<String> storageLore = new ArrayList<>(List.of("クリック: 所持ノード一覧を開く",
+                "右クリック格納した欠片を選択できます"));
+        if (session.selectedFragment != null) {
+            FragmentPresentation.Entry selected = FragmentPresentation.get(session.selectedFragment.fragmentId());
+            storageLore.add("選択中: " + selected.plainName() + " Lv." + session.selectedFragment.level());
+        }
+        inventory.setItem(53, item(Material.CHEST, "所持ノード", NamedTextColor.YELLOW, storageLore));
         inventory.setItem(45, item(Material.ARROW, "魔術一覧へ戻る", NamedTextColor.YELLOW,
                 List.of("保存済み魔術の選択・削除")));
         player.openInventory(inventory);
@@ -137,15 +146,22 @@ final class EditorGui implements Listener {
             handleLibraryClick(player, holder, event);
             return;
         }
+        if (event.getInventory().getHolder() instanceof PaletteHolder holder) {
+            event.setCancelled(true);
+            if (!holder.owner.equals(player.getUniqueId())) return;
+            handlePaletteClick(player, holder, event.getRawSlot());
+            return;
+        }
         if (!(event.getInventory().getHolder() instanceof EditorHolder holder)) return;
         event.setCancelled(true);
         if (!holder.owner.equals(player.getUniqueId())) return;
         Session session = sessions.get(player.getUniqueId()); if (session == null) return;
         int raw = event.getRawSlot();
         if (raw == 45) { renderLibrary(player, 0); return; }
+        if (raw == 53) { renderPalette(player, session, 0); return; }
         int gridIndex = indexOf(raw);
         if (gridIndex >= 0) {
-            if (event.isRightClick()) removeNode(session, gridIndex);
+            if (event.isRightClick()) stowNode(session, gridIndex);
             else addNode(player, session, gridIndex, event.getCursor());
             render(player, session); return;
         }
@@ -154,13 +170,58 @@ final class EditorGui implements Listener {
             CircuitService.SaveResult result = embedding.save(player, session.circuit, session.circuit.revision());
             if (result.saved()) { session.circuit = result.circuit(); player.sendMessage(Component.text("魔術回路を保存しました。装着した欠片は回路へ封入されました", NamedTextColor.GREEN)); }
             else player.sendMessage(Component.text(result.conflict() ? "別の画面で更新されています。開き直してください"
-                    : result.message().equals("MISSING_FRAGMENT") ? "新しく装着した欠片が不足しています" : "検証エラーのため保存できません", NamedTextColor.RED));
+                    : result.message().equals("MISSING_FRAGMENT") ? "新しく装着した欠片が不足しています"
+                    : result.message().startsWith("FRAGMENT_STORAGE_FULL") ? "所持ノードが上限255個のため、しまえません"
+                    : "検証エラーのため保存できません", NamedTextColor.RED));
             render(player, session); return;
         }
         if (raw == 51) {
             if (session.circuit.revision() == 0) player.sendMessage(Component.text("先に保存してください", NamedTextColor.RED));
             else { var result = spells.cast(player, session.circuit.circuitId(), "MANUAL"); player.sendMessage(Component.text(result.message(), result.accepted() ? NamedTextColor.GREEN : NamedTextColor.RED)); }
         }
+    }
+
+    private void renderPalette(Player player, Session session, int requestedPage) {
+        List<OwnedFragment> stored = database.storedFragments(player.getUniqueId());
+        int pages = Math.max(1, (stored.size() + 44) / 45);
+        int page = Math.max(0, Math.min(requestedPage, pages - 1));
+        PaletteHolder holder = new PaletteHolder(player.getUniqueId(), page);
+        Inventory inventory = Bukkit.createInventory(holder, 54,
+                Component.text("MonaSpellForge — 所持ノード", NamedTextColor.DARK_PURPLE));
+        holder.inventory = inventory;
+        for (int slot = 0; slot < 45; slot++) {
+            int index = page * 45 + slot;
+            if (index >= stored.size()) break;
+            OwnedFragment owned = stored.get(index);
+            FragmentDefinition definition = fragments.getDefinition(owned.fragmentId());
+            Material material = definition == null ? Material.BARRIER
+                    : Optional.ofNullable(Material.matchMaterial(definition.displayItem())).orElse(Material.AMETHYST_SHARD);
+            FragmentPresentation.Entry presentation = FragmentPresentation.get(owned.fragmentId());
+            inventory.setItem(slot, item(material, presentation.plainName() + " Lv." + owned.level(),
+                    color(definition == null ? "" : definition.rarity()),
+                    List.of(presentation.description(), "クリック: 配置用に選択", "所持ID: " + owned.instanceId().toString().substring(0, 8))));
+        }
+        inventory.setItem(45, item(Material.ARROW, "前のページ", NamedTextColor.YELLOW, List.of((page + 1) + " / " + pages)));
+        inventory.setItem(49, item(Material.ARROW, "回路編集へ戻る", NamedTextColor.YELLOW, List.of("選択せず戻ります")));
+        inventory.setItem(50, item(Material.COMPASS, "一覧を更新", NamedTextColor.AQUA, List.of("格納内容を再読み込みします")));
+        inventory.setItem(53, item(Material.ARROW, "次のページ", NamedTextColor.YELLOW, List.of((page + 1) + " / " + pages)));
+        player.openInventory(inventory);
+    }
+
+    private void handlePaletteClick(Player player, PaletteHolder holder, int raw) {
+        Session session = sessions.get(player.getUniqueId());
+        if (session == null) { renderLibrary(player, 0); return; }
+        if (raw == 45) { renderPalette(player, session, holder.page - 1); return; }
+        if (raw == 49) { render(player, session); return; }
+        if (raw == 50) { renderPalette(player, session, holder.page); return; }
+        if (raw == 53) { renderPalette(player, session, holder.page + 1); return; }
+        if (raw < 0 || raw >= 45) return;
+        List<OwnedFragment> stored = database.storedFragments(player.getUniqueId());
+        int index = holder.page * 45 + raw;
+        if (index >= stored.size()) { renderPalette(player, session, holder.page); return; }
+        session.selectedFragment = stored.get(index);
+        player.sendMessage(Component.text("所持ノードを選択しました。空き枠をクリックして配置してください", NamedTextColor.AQUA));
+        render(player, session);
     }
 
     private void handleLibraryClick(Player player, LibraryHolder holder, InventoryClickEvent event) {
@@ -222,12 +283,33 @@ final class EditorGui implements Listener {
     private void addNode(Player player, Session session, int slot, ItemStack cursor) {
         if (session.circuit.nodes().stream().anyMatch(n -> n.slotIndex() == slot)) return;
         FragmentService.ValidationResult valid = fragments.validateItem(cursor, player);
-        if (!valid.valid()) { player.sendMessage(Component.text("有効な自分の欠片をカーソルに持ってください: " + valid.reason(), NamedTextColor.RED)); return; }
-        FragmentInstance instance = valid.instance();
-        CircuitNode node = new CircuitNode(UUID.randomUUID(), slot, instance.instanceId(), instance.fragmentId(), instance.level(), Map.of(), slot % 5, slot / 5);
+        UUID instanceId;
+        String fragmentId;
+        int level;
+        if (valid.valid()) {
+            FragmentInstance instance = valid.instance();
+            instanceId = instance.instanceId(); fragmentId = instance.fragmentId(); level = instance.level();
+        } else if (session.selectedFragment != null) {
+            OwnedFragment selected = database.storedFragment(player.getUniqueId(), session.selectedFragment.instanceId()).orElse(null);
+            if (selected == null) {
+                session.selectedFragment = null;
+                player.sendMessage(Component.text("選択した所持ノードはもう利用できません。再選択してください", NamedTextColor.RED));
+                return;
+            }
+            instanceId = selected.instanceId(); fragmentId = selected.fragmentId(); level = selected.level();
+        } else {
+            player.sendMessage(Component.text("欠片をカーソルに持つか、右下の所持ノードから選んでください", NamedTextColor.RED));
+            return;
+        }
+        if (session.circuit.nodes().stream().anyMatch(node -> node.fragmentInstanceId().equals(instanceId))) {
+            player.sendMessage(Component.text("同じ所持ノードは回路内へ1回だけ配置できます", NamedTextColor.RED));
+            return;
+        }
+        CircuitNode node = new CircuitNode(UUID.randomUUID(), slot, instanceId, fragmentId, level, Map.of(), slot % 5, slot / 5);
         List<CircuitNode> nodes = new ArrayList<>(session.circuit.nodes()); nodes.add(node);
         List<CircuitEdge> edges = new ArrayList<>(session.circuit.edges()); autoConnect(nodes, node, edges);
         session.circuit = session.circuit.withContent(nodes, edges); session.touched = System.currentTimeMillis();
+        session.selectedFragment = null;
     }
 
     private void autoConnect(List<CircuitNode> nodes, CircuitNode added, List<CircuitEdge> edges) {
@@ -244,7 +326,7 @@ final class EditorGui implements Listener {
         }
     }
 
-    private void removeNode(Session session, int slot) {
+    private void stowNode(Session session, int slot) {
         CircuitNode removed = session.circuit.nodes().stream().filter(n -> n.slotIndex() == slot).findFirst().orElse(null); if (removed == null) return;
         List<CircuitNode> nodes = session.circuit.nodes().stream().filter(n -> !n.nodeId().equals(removed.nodeId())).toList();
         List<CircuitEdge> edges = session.circuit.edges().stream().filter(e -> !e.sourceNodeId().equals(removed.nodeId()) && !e.targetNodeId().equals(removed.nodeId())).toList();
@@ -262,11 +344,19 @@ final class EditorGui implements Listener {
         meta.lore(lore.stream().map(line -> Component.text(line, NamedTextColor.GRAY)).toList()); item.setItemMeta(meta); return item;
     }
     private static NamedTextColor color(String rarity) { return switch (rarity) { case "EPIC" -> NamedTextColor.LIGHT_PURPLE; case "RARE" -> NamedTextColor.AQUA; default -> NamedTextColor.GREEN; }; }
-    private static final class Session { Circuit circuit; long touched; Session(Circuit circuit, long touched) { this.circuit = circuit; this.touched = touched; } }
+    private static final class Session {
+        Circuit circuit; long touched; OwnedFragment selectedFragment;
+        Session(Circuit circuit, long touched) { this.circuit = circuit; this.touched = touched; }
+    }
     private static final class EditorHolder implements InventoryHolder { final UUID owner; Inventory inventory; EditorHolder(UUID owner) { this.owner = owner; } @Override public Inventory getInventory() { return inventory; } }
     private static final class LibraryHolder implements InventoryHolder {
         final UUID owner; final int page; Inventory inventory;
         LibraryHolder(UUID owner, int page) { this.owner = owner; this.page = page; }
+        @Override public Inventory getInventory() { return inventory; }
+    }
+    private static final class PaletteHolder implements InventoryHolder {
+        final UUID owner; final int page; Inventory inventory;
+        PaletteHolder(UUID owner, int page) { this.owner = owner; this.page = page; }
         @Override public Inventory getInventory() { return inventory; }
     }
     private record DeleteConfirmation(UUID circuitId, long expiresAt) { }

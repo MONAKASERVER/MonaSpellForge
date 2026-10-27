@@ -121,7 +121,11 @@ final class DefaultSpellService implements SpellService {
         CircuitNode periodic = node(spell, "PERIODIC_SIGNAL");
         long interval = periodic == null ? 0 : (long) (clamp(number(periodic, "seconds", Math.max(1, periodic.level())), 0.25, 30) * 20);
         if (periodic != null || node(spell, "AUTOMATION") != null) iterations = Math.min(8, Math.max(iterations, periodic == null ? 3 : periodic.level() + 1));
-        return new RuntimePlan(iterations, delayTicks, interval, multiplier);
+        CircuitNode speed = node(spell, "CIRCUIT_SPEED");
+        int speedMultiplier = speed == null ? 1 : Math.max(2, Math.min(8, speed.level() * 2));
+        if (delayTicks > 0) delayTicks = Math.max(1, delayTicks / speedMultiplier);
+        if (interval > 0) interval = Math.max(1, interval / speedMultiplier);
+        return new RuntimePlan(iterations, delayTicks, interval, multiplier, speedMultiplier);
     }
 
     private void schedule(Player player, CompiledSpell spell, UUID circuitId, UUID castId, long started, RuntimePlan plan) {
@@ -218,7 +222,7 @@ final class DefaultSpellService implements SpellService {
     private static CircuitNode node(CompiledSpell spell,String id){return spell.executionOrder().stream().filter(n->n.fragmentId().equals(id)).findFirst().orElse(null);}
     private static double number(CircuitNode node,String key,double fallback){try{return Double.parseDouble(node.parameters().getOrDefault(key,Double.toString(fallback)));}catch(Exception ignored){return fallback;}}
     private static double clamp(double value,double min,double max){return Math.max(min,Math.min(max,value));}
-    private record RuntimePlan(int iterations,long delayTicks,long intervalTicks,double powerMultiplier){}
+    private record RuntimePlan(int iterations,long delayTicks,long intervalTicks,double powerMultiplier,int speedMultiplier){}
 
     private static final class FragmentCatalogIds {
         static final Set<String> ELEMENTS = Set.of("FIRE","ICE","WIND","EARTH","LIGHTNING","WATER","LIGHT","DARK","POISON","GRAVITY","HEAL","ARCANE");

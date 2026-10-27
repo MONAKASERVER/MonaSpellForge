@@ -85,10 +85,17 @@ class SpellDatabaseTest {
             Circuit empty=Circuit.empty(owner);
             CircuitNode node=new CircuitNode(UUID.randomUUID(),0,instanceId,"FIRE",1,Map.of(),0,0);
             Circuit circuit=new Circuit(empty.circuitId(),owner,"embedded",0,1,List.of(node),List.of(),empty.createdAt(),empty.updatedAt());
-            Circuit saved=database.saveEmbedded(circuit,0,Set.of(instanceId));
+            Circuit saved=database.saveEmbedded(circuit,0,Set.of(instanceId),List.of());
             assertEquals(1,saved.revision());
             assertTrue(database.storedFragments(owner).isEmpty());
-            assertThrows(SpellDatabase.FragmentUnavailable.class,()->database.saveEmbedded(Circuit.empty(owner),0,Set.of(instanceId)));
+            Circuit stowedInput=new Circuit(saved.circuitId(),owner,"embedded",saved.revision(),1,List.of(),List.of(),saved.createdAt(),saved.updatedAt());
+            Circuit stowed=database.saveEmbedded(stowedInput,saved.revision(),Set.of(),List.of(node));
+            assertEquals(2,stowed.revision());
+            assertEquals(instanceId,database.storedFragment(owner,instanceId).orElseThrow().instanceId());
+            Circuit reembedded=database.saveEmbedded(new Circuit(stowed.circuitId(),owner,"embedded",stowed.revision(),1,
+                    List.of(node),List.of(),stowed.createdAt(),stowed.updatedAt()),stowed.revision(),Set.of(instanceId),List.of());
+            assertEquals(3,reembedded.revision());
+            assertTrue(database.storedFragments(owner).isEmpty());
         }
     }
 }

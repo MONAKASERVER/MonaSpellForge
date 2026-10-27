@@ -47,6 +47,9 @@ final class CircuitEmbeddingService {
                 if (!old.fragmentId().equals(node.fragmentId()) || old.level() != node.level()) return failure("FRAGMENT_TAMPERED", circuit);
             } else newlyEmbedded.add(node.fragmentInstanceId());
         }
+        List<CircuitNode> returnedNodes = embedded.values().stream()
+                .filter(node -> !seen.contains(node.fragmentInstanceId()))
+                .toList();
 
         Map<UUID, FragmentService.ValidationResult> inventory = new HashMap<>();
         for (ItemStack item : player.getInventory().getContents()) {
@@ -67,13 +70,15 @@ final class CircuitEmbeddingService {
         }
 
         try {
-            Circuit saved = database.saveEmbedded(circuit, expectedRevision, newlyEmbedded);
+            Circuit saved = database.saveEmbedded(circuit, expectedRevision, newlyEmbedded, returnedNodes);
             removeEmbeddedItems(player, newlyEmbedded);
             return new CircuitService.SaveResult(true, false, "OK", saved);
         } catch (SpellDatabase.OptimisticConflict conflict) {
             return new CircuitService.SaveResult(false, true, "REVISION_CONFLICT:" + conflict.revision, circuit);
         } catch (SpellDatabase.FragmentUnavailable unavailable) {
             return failure("MISSING_FRAGMENT", circuit);
+        } catch (SpellDatabase.FragmentStorageFull full) {
+            return failure("FRAGMENT_STORAGE_FULL:" + full.fragmentId, circuit);
         } catch (SpellDatabase.OwnershipMismatch mismatch) {
             return failure("OWNER_MISMATCH", circuit);
         }

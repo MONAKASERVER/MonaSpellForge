@@ -476,7 +476,7 @@ public final class SpellForgeScreen extends Screen {
     private void drawContextMenu(GuiGraphicsExtractor graphics, ContextMenu menu, int mouseX, int mouseY) {
         List<String> labels = menu.nodeId == null
                 ? List.of("ノードを追加")
-                : List.of("ノードを複製", "ノードを削除", "ノードを追加");
+                : List.of("ノードを複製", "ノードをしまう", "ノードを追加");
         int menuWidth = 132;
         int menuHeight = labels.size() * 22 + 6;
         int x = Math.min(menu.x, width - menuWidth - 4);
@@ -486,8 +486,7 @@ public final class SpellForgeScreen extends Screen {
             int rowY = y + 3 + i * 22;
             boolean hover = mouseX >= x + 3 && mouseX <= x + menuWidth - 3 && mouseY >= rowY && mouseY < rowY + 22;
             if (hover) graphics.fill(x + 3, rowY, x + menuWidth - 3, rowY + 22, 0xFF536275);
-            graphics.text(font, Component.literal(labels.get(i)), x + 9, rowY + 7,
-                    labels.get(i).contains("削除") ? STATUS_ERROR : TEXT_PRIMARY, false);
+            graphics.text(font, Component.literal(labels.get(i)), x + 9, rowY + 7, TEXT_PRIMARY, false);
         }
     }
 
@@ -717,7 +716,7 @@ public final class SpellForgeScreen extends Screen {
         ContextMenu menu = contextMenu;
         List<ContextAction> actions = menu.nodeId == null
                 ? List.of(ContextAction.SEARCH)
-                : List.of(ContextAction.DUPLICATE, ContextAction.DELETE, ContextAction.SEARCH);
+                : List.of(ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH);
         int width = 132;
         int x = Math.min(menu.x, this.width - width - 4);
         int height = actions.size() * 22 + 6;
@@ -732,13 +731,13 @@ public final class SpellForgeScreen extends Screen {
                 searchBox.setFocused(true);
                 setFocused(searchBox);
             }
-            case DELETE -> deleteNode(menu.nodeId);
+            case STOW -> stowNode(menu.nodeId);
             case DUPLICATE -> duplicateNode(menu.nodeId);
         }
         return true;
     }
 
-    private void deleteNode(UUID nodeId) {
+    private void stowNode(UUID nodeId) {
         if (nodeId == null) return;
         saveHistory();
         List<CircuitNode> nodes = circuit.nodes().stream().filter(node -> !node.nodeId().equals(nodeId)).toList();
@@ -746,6 +745,8 @@ public final class SpellForgeScreen extends Screen {
                 && !edge.targetNodeId().equals(nodeId)).toList();
         circuit = circuit.withContent(nodes, edges);
         refreshValidation();
+        status = Component.literal("保存するとノードを所持一覧へ戻します");
+        statusColor = CONNECTED;
     }
 
     private void duplicateNode(UUID nodeId) {
@@ -1126,7 +1127,7 @@ public final class SpellForgeScreen extends Screen {
     @Override
     public boolean isPauseScreen() { return false; }
 
-    private enum ContextAction { DUPLICATE, DELETE, SEARCH }
+    private enum ContextAction { DUPLICATE, STOW, SEARCH }
     private enum CategoryTab {
         ALL("全部", null), TRIGGER("発動", Category.TRIGGER), ELEMENT("属性", Category.ELEMENT),
         SHAPE("形状", Category.SHAPE), TARGET("対象", Category.TARGET), MODIFIER("補助", Category.MODIFIER),

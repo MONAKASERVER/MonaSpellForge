@@ -8,7 +8,7 @@ softdepend: [Vault, MythicMobs, floodgate, WorldGuard]
 commands:
   msf:
     description: MonaSpellForge
-    usage: /msf [open|spell|stone|fragment|reload|debug|admin]
+    usage: /msf [open|web|spell|stone|fragment|reload|debug|admin]
     permission: monaspellforge.use
 permissions:
   monaspellforge.use: {default: true}

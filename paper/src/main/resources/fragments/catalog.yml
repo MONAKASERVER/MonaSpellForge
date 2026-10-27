@@ -36,7 +36,7 @@ fragments:
   AREA_TARGETS: {category: TARGET, max-level: 3, rarity: UNCOMMON}
   SELF: {category: TARGET, max-level: 3, rarity: UNCOMMON}
   ALLIES: {category: TARGET, max-level: 3, rarity: UNCOMMON}
-  # Modifiers (12)
+  # Modifiers (13)
   POWER: {category: MODIFIER, max-level: 5, rarity: EPIC}
   VELOCITY: {category: MODIFIER, max-level: 5, rarity: EPIC}
   RANGE: {category: MODIFIER, max-level: 5, rarity: EPIC}
@@ -49,6 +49,7 @@ fragments:
   AMPLIFY_X2: {category: MODIFIER, max-level: 5, rarity: EPIC}
   AMPLIFY_X3: {category: MODIFIER, max-level: 5, rarity: EPIC}
   AMPLIFY_X4: {category: MODIFIER, max-level: 5, rarity: EPIC}
+  CIRCUIT_SPEED: {category: MODIFIER, max-level: 4, rarity: RARE}
   # Logic (26)
   FORK: {category: LOGIC, max-level: 5, rarity: EPIC}
   MERGE_ANY: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
