@@ -120,6 +120,48 @@ class ArcVmTest {
         assertTrue(resumes < 100);
     }
 
+    @Test void parallelAllWaitsForEveryBranchAndAggregatesSuccess() {
+        var compiled = new ArcCompiler().compile("""
+            spell X { on cast {
+              let results = await parallel all { wait 3t; wait 1t; };
+              return results.all_success;
+            } }
+            """);
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        ArcVm vm = new ArcVm();
+        var first = vm.run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(200, 0), new NoopHost());
+        assertEquals(ArcVm.Status.SUSPENDED, first.status()); assertEquals(1, first.resumeAfterTicks());
+        var second = vm.resume(compiled.program(), first.continuation(), new ArcVm.Limits(200, 0), new NoopHost());
+        assertEquals(ArcVm.Status.SUSPENDED, second.status()); assertEquals(2, second.resumeAfterTicks());
+        var done = vm.resume(compiled.program(), second.continuation(), new ArcVm.Limits(200, 0), new NoopHost());
+        assertEquals(ArcVm.Status.COMPLETED, done.status()); assertEquals(true, done.value());
+    }
+
+    @Test void parallelAnyTakesFirstSuccessAndRaceTakesFirstCompletion() {
+        var anyProgram = new ArcCompiler().compile("""
+            spell X { on cast {
+              let winner = await parallel any { wait 3t; spell.cast("A"); };
+              return winner.is_ok;
+            } }
+            """);
+        assertTrue(anyProgram.valid(), () -> anyProgram.diagnostics().toString());
+        ArcVm vm = new ArcVm();
+        var any = vm.run(anyProgram.program(), "on:cast", Map.of(), new ArcVm.Limits(200, 1), new NoopHost());
+        assertEquals(ArcVm.Status.COMPLETED, any.status()); assertEquals(true, any.value());
+
+        var raceProgram = new ArcCompiler().compile("""
+            spell X { on cast {
+              let winner = race { wait 3t; wait 1t; };
+              return winner.is_ok;
+            } }
+            """);
+        assertTrue(raceProgram.valid(), () -> raceProgram.diagnostics().toString());
+        var race = vm.run(raceProgram.program(), "on:cast", Map.of(), new ArcVm.Limits(200, 0), new NoopHost());
+        assertEquals(ArcVm.Status.SUSPENDED, race.status()); assertEquals(1, race.resumeAfterTicks());
+        race = vm.resume(raceProgram.program(), race.continuation(), new ArcVm.Limits(200, 0), new NoopHost());
+        assertEquals(ArcVm.Status.COMPLETED, race.status()); assertEquals(true, race.value());
+    }
+
     private static final class NoopHost implements ArcVm.Host {
         public Object invoke(String api, List<Object> arguments, List<String> argumentNames, ArcVm.Execution execution) { return 1L; }
         public Object member(Object receiver, String name) { return null; }

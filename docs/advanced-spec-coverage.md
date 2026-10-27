@@ -15,6 +15,7 @@ This document separates implemented execution semantics from accepted design. A 
 - Runtime-tagged `Option`/`Result` values with `Some`, `None`, `Ok`, `Err`, payload-binding match patterns, `?` early return and Option/Result exhaustiveness checks.
 - Resumable `wait` / `after` execution with opaque continuations, preserved fuel/variables/call stack/effects, bounded suspension count and a single-threaded tick scheduler with task and per-tick limits.
 - Parsed state persistence policies for player/spell/session scope and TTL, embedded closed-host metadata, plus bounded typed SQLite storage with schema versions, expiry cleanup and owner erasure.
+- `await parallel all`, `await parallel any` and `race` with separately compiled ArcVM branches, deterministic cooperative joins, aggregate fuel/effect accounting and cancellation-by-discard after resolution.
 - Capability discovery and closed APIs for math, targets, combat, mana, particles, displays, raycast, block/item observation, ArcSys storage and time.
 - Operator-only capability boundary for the future Skript bridge; arbitrary Skript, commands, JVM, OS, files and sockets remain unavailable.
 - Deterministic bytecode, verifier, fuel/stack/list/string/effect/call-depth limits and simulation effect requests.
@@ -29,7 +30,7 @@ This document separates implemented execution semantics from accepted design. A 
 
 - Full generic propagation for annotated `Option<T>` / `Result<T,E>` signatures and exhaustive user-defined enum checking (the runtime constructors, patterns and `?` semantics are implemented).
 - Full statement/block match arms and enum/struct runtime values.
-- `parallel all/any`, `race`, `await` and conditional waits (single-task resumable cooperative scheduling is implemented).
+- General-purpose awaitable handles and conditional/event waits outside parallel groups.
 - Connecting persistent state storage to production ArcVM activation and an explicit operator/player erasure command (the typed SQLite, TTL cleanup, schema-version and owner-erasure layer is implemented).
 - Contract `requires/ensures`, effect-function signatures and static budget annotations as enforceable constructs.
 - Target selection DSL, node `bind`, channel/charge/release and cross-spell signal loop prevention.

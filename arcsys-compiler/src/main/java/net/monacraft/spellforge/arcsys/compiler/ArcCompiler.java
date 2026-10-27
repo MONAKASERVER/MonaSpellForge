@@ -53,6 +53,7 @@ public final class ArcCompiler {
         private Set<String> functionNames = Set.of();
         private final Deque<LoopContext> loops = new ArrayDeque<>();
         private final List<List<Block>> deferredScopes = new ArrayList<>();
+        private final List<PendingBranch> pendingBranches = new ArrayList<>();
         private boolean compilingDeferred;
 
         private Builder(List<Diagnostic> diagnostics) { this.diagnostics = diagnostics; }
@@ -92,6 +93,7 @@ public final class ArcCompiler {
                 for (int index = parameters.size() - 1; index >= 0; index--) emit(STORE, parameters.get(index), 0, 0);
                 block(function.body()); emit(PUSH_NONE); emit(RETURN);
             }
+            for (int index = 0; index < pendingBranches.size(); index++) compilePendingBranch(pendingBranches.get(index));
             emit(HALT);
             if (code.size() > MAX_INSTRUCTIONS) error("ARC-E2004", "命令数が上限を超えています", spell, "術式を分割してください");
             Set<String> requirements = new TreeSet<>();
@@ -223,7 +225,33 @@ public final class ArcCompiler {
                 }
                 case TryExpr t -> tryExpression(t);
                 case BlockExpr b -> { block(b.body()); emit(PUSH_NONE); }
+                case ParallelExpr p -> parallelExpression(p);
             }
+        }
+
+        void parallelExpression(ParallelExpr parallel) {
+            List<String> entries = new ArrayList<>();
+            for (Stmt branch : parallel.branches()) {
+                String name = "$parallel" + synthetic++;
+                entries.add(name); pendingBranches.add(new PendingBranch(name, branch));
+            }
+            emit(PARALLEL, parallel.mode().name() + "\u0000" + String.join(",", entries), entries.size(), 0);
+            capabilities.add("control.parallel");
+            fuel += entries.size() * 8;
+        }
+
+        void compilePendingBranch(PendingBranch pending) {
+            entries.put("task:" + pending.name(), code.size());
+            deferredScopes.add(new ArrayList<>());
+            if (pending.statement() instanceof ExprStmt expression) {
+                expression(expression.expression());
+                String result = "$branch" + synthetic++;
+                emit(STORE, result, 0, 0); emitDeferredScope(deferredScopes.size() - 1);
+                emit(LOAD, result, 0, 0);
+            } else {
+                statement(pending.statement()); emitDeferredScope(deferredScopes.size() - 1); emit(PUSH_NONE);
+            }
+            deferredScopes.removeLast(); emit(RETURN);
         }
 
         void tryExpression(TryExpr expression) {
@@ -361,6 +389,7 @@ public final class ArcCompiler {
             final List<Integer> continues = new ArrayList<>();
             private LoopContext(int deferDepth) { this.deferDepth = deferDepth; }
         }
+        private record PendingBranch(String name, Stmt statement) { }
     }
 
     private static Map<String, ApiDefinition> apiDefinitions() {

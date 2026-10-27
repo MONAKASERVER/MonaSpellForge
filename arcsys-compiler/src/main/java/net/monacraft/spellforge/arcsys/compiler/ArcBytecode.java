@@ -16,7 +16,7 @@ import java.util.TreeMap;
 public final class ArcBytecode {
     private ArcBytecode() { }
 
-    public static final int FORMAT_VERSION = 3;
+    public static final int FORMAT_VERSION = 4;
 
     public enum Op {
         PUSH_NONE, PUSH_BOOL, PUSH_LONG, PUSH_DOUBLE, PUSH_STRING,
@@ -26,7 +26,7 @@ public final class ArcBytecode {
         GET_MEMBER, MAKE_LIST,
         MAKE_VARIANT, IS_VARIANT, UNWRAP_VARIANT, COERCE_RESULT,
         CALL_HOST, CALL,
-        SUSPEND,
+        SUSPEND, PARALLEL,
         JUMP, JUMP_IF_FALSE,
         ITER_INIT, ITER_HAS_NEXT, ITER_NEXT,
         RETURN, HALT
@@ -66,7 +66,7 @@ public final class ArcBytecode {
             try {
                 ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                 DataOutputStream out = new DataOutputStream(bytes);
-                out.writeInt(0x41524333); // ARC3
+                out.writeInt(0x41524334); // ARC4
                 out.writeInt(FORMAT_VERSION);
                 writeUtf8(out, spellName);
                 out.writeInt(entryPoints.size());

@@ -166,7 +166,7 @@ public final class ArcLexer {
         values.put("for", Type.FOR); values.put("in", Type.IN); values.put("repeat", Type.REPEAT); values.put("break", Type.BREAK);
         values.put("continue", Type.CONTINUE); values.put("return", Type.RETURN); values.put("guard", Type.GUARD); values.put("defer", Type.DEFER);
         values.put("emit", Type.EMIT); values.put("chance", Type.CHANCE); values.put("wait", Type.WAIT); values.put("every", Type.EVERY);
-        values.put("loop", Type.LOOP); values.put("foreach", Type.FOREACH); values.put("parallel", Type.PARALLEL); values.put("await", Type.AWAIT);
+        values.put("loop", Type.LOOP); values.put("foreach", Type.FOREACH); values.put("parallel", Type.PARALLEL); values.put("await", Type.AWAIT); values.put("race", Type.RACE);
         values.put("after", Type.AFTER); values.put("atomic", Type.ATOMIC); values.put("transaction", Type.TRANSACTION);
         values.put("visual", Type.VISUAL); values.put("combat", Type.COMBAT); values.put("pub", Type.PUB); values.put("private", Type.PRIVATE);
         values.put("struct", Type.STRUCT); values.put("enum", Type.ENUM); values.put("type", Type.TYPE); values.put("trait", Type.TRAIT);

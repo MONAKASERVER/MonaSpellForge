@@ -101,6 +101,12 @@ public final class ArcTypeChecker {
             case VariantExpr v -> variant(v);
             case TryExpr t -> tryExpression(t);
             case BlockExpr b -> { block(b.body()); yield ArcType.of(Kind.NONE); }
+            case ParallelExpr p -> {
+                for (Stmt branch : p.branches()) {
+                    scopes.push(new HashMap<>()); statement(branch); scopes.pop();
+                }
+                yield p.mode() == ParallelMode.ALL ? ArcType.list(ArcType.of(Kind.RESULT)) : ArcType.of(Kind.RESULT);
+            }
         };
     }
 

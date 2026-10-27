@@ -43,6 +43,20 @@ class ArcCompilerTest {
         assertTrue(result.program().instructions().stream().anyMatch(instruction ->
                 instruction.op() == ArcBytecode.Op.PUSH_LONG && instruction.number() == 7L * 24 * 60 * 60 * 20));
     }
+
+    @Test
+    void compilesParallelBranchesIntoVerifiedTaskEntries() {
+        var result = new ArcCompiler().compile("""
+            spell X { on cast {
+              let results = await parallel all { spell.cast("A"); wait 2t; };
+              return results.all_success;
+            } }
+            """);
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        var parallel = result.program().instructions().stream().filter(i -> i.op() == ArcBytecode.Op.PARALLEL).findFirst().orElseThrow();
+        assertEquals(2, parallel.number());
+        assertEquals(2, result.program().entryPoints().keySet().stream().filter(name -> name.startsWith("task:")).count());
+    }
     private static final String SOURCE = """
         spell Test { on pulse(20t) {
           let targets = mobs.hostile(radius: 24, limit: 8);

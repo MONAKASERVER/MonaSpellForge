@@ -449,6 +449,11 @@ public final class ArcParser {
     }
 
     private Expr unary() {
+        if (match(AWAIT)) {
+            Token begin = previous();
+            consume(PARALLEL, "ARC-E1101", "awaitの後にはparallelが必要です");
+            return parallelExpression(begin, true);
+        }
         if (match(BANG, MINUS)) {
             Token operator = previous();
             Expr operand = unary();
@@ -490,6 +495,8 @@ public final class ArcParser {
     }
 
     private Expr primary() {
+        if (match(PARALLEL)) return parallelExpression(previous(), false);
+        if (match(RACE)) return parallelExpression(previous(), false);
         if (match(MATCH)) return matchExpression(previous());
         if (match(FALSE)) return new Literal(false, previous().span());
         if (match(TRUE)) return new Literal(true, previous().span());
@@ -510,6 +517,27 @@ public final class ArcParser {
             return value;
         }
         throw error(peek(), "ARC-E1132", "式が必要です", "値、変数、または関数呼び出しを記述してください");
+    }
+
+    private Expr parallelExpression(Token begin, boolean awaited) {
+        ParallelMode mode = begin.type() == RACE ? ParallelMode.RACE : ParallelMode.ALL;
+        if (begin.type() != RACE && check(IDENT)) {
+            if (peek().lexeme().equalsIgnoreCase("all")) { advance(); mode = ParallelMode.ALL; }
+            else if (peek().lexeme().equalsIgnoreCase("any")) { advance(); mode = ParallelMode.ANY; }
+        }
+        consume(LEFT_BRACE, "ARC-E1133", "parallel/race本体の '{' が必要です");
+        enter(begin);
+        List<Stmt> branches = new ArrayList<>();
+        Token end;
+        try {
+            while (!check(RIGHT_BRACE) && !atEnd()) {
+                if (branches.size() >= 16) throw error(peek(), "ARC-E1134", "並列経路は16個までです");
+                branches.add(statement());
+            }
+            end = consume(RIGHT_BRACE, "ARC-E1135", "parallel/race本体を閉じる '}' が必要です");
+        } finally { depth--; }
+        if (branches.isEmpty()) throw error(end, "ARC-E1136", "並列経路が空です");
+        return new ParallelExpr(mode, branches, join(begin.span(), end.span()));
     }
 
     private Expr matchExpression(Token begin) {

@@ -53,6 +53,25 @@ class ArcParserTest {
         assertEquals(7L * 24 * 60 * 60 * 20, persistence.ttlTicks());
         assertFalse(ArcParser.parse("spell X { on cast { let x = 1 persist(player); } }").valid());
     }
+
+    @Test
+    void parsesAwaitParallelModesAndRace() {
+        var result = ArcParser.parse("""
+            spell X { on cast {
+              let all = await parallel all { spell.cast("A"); spell.cast("B"); };
+              let any = await parallel any { spell.cast("C"); wait 2t; };
+              let winner = race { wait 1t; spell.cast("D"); };
+            } }
+            """);
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        var statements = result.program().spells().getFirst().handlers().getFirst().body().statements();
+        assertEquals(ArcAst.ParallelMode.ALL, assertInstanceOf(ArcAst.ParallelExpr.class,
+                assertInstanceOf(ArcAst.VarDecl.class, statements.get(0)).initializer()).mode());
+        assertEquals(ArcAst.ParallelMode.ANY, assertInstanceOf(ArcAst.ParallelExpr.class,
+                assertInstanceOf(ArcAst.VarDecl.class, statements.get(1)).initializer()).mode());
+        assertEquals(ArcAst.ParallelMode.RACE, assertInstanceOf(ArcAst.ParallelExpr.class,
+                assertInstanceOf(ArcAst.VarDecl.class, statements.get(2)).initializer()).mode());
+    }
     private static final String SAMPLE = """
         spell ApocalypseEngine {
           on pulse(20t) {

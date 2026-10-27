@@ -68,7 +68,7 @@ public final class ArcAst {
     public record ExprStmt(Expr expression, Span span) implements Stmt { }
 
     public sealed interface Expr extends Node permits Literal, Variable, Unary, Binary,
-        Assignment, Member, Call, ListExpr, MatchExpr, VariantExpr, TryExpr, BlockExpr { }
+        Assignment, Member, Call, ListExpr, MatchExpr, VariantExpr, TryExpr, BlockExpr, ParallelExpr { }
 
     public record Literal(Object value, Span span) implements Expr { }
     public record Variable(String name, Span span) implements Expr { }
@@ -86,6 +86,10 @@ public final class ArcAst {
     public record VariantExpr(String tag, Expr value, Span span) implements Expr { }
     public record TryExpr(Expr value, Span span) implements Expr { }
     public record BlockExpr(Block body, Span span) implements Expr { }
+    public enum ParallelMode { ALL, ANY, RACE }
+    public record ParallelExpr(ParallelMode mode, List<Stmt> branches, Span span) implements Expr {
+        public ParallelExpr { branches = List.copyOf(branches); }
+    }
 
     public sealed interface Pattern permits WildcardPattern, LiteralPattern, RangePattern, EnumPattern, VariantPattern { Span span(); }
     public record WildcardPattern(Span span) implements Pattern { }

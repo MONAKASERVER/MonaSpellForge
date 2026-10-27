@@ -30,6 +30,14 @@ public final class ArcVerifier {
                 issues.add(new Issue("ARC-V4009", pc, "invalid variant"));
             if ((instruction.op() == Op.IS_VARIANT || instruction.op() == Op.UNWRAP_VARIANT) && instruction.text().isBlank())
                 issues.add(new Issue("ARC-V4010", pc, "invalid variant tag"));
+            if (instruction.op() == Op.PARALLEL) {
+                int separator = instruction.text().indexOf('\u0000');
+                String[] entries = separator < 0 ? new String[0] : instruction.text().substring(separator + 1).split(",");
+                if (instruction.number() < 1 || instruction.number() > 16 || entries.length != instruction.number())
+                    issues.add(new Issue("ARC-V4011", pc, "invalid parallel descriptor"));
+                for (String entry : entries) if (!program.entryPoints().containsKey("task:" + entry))
+                    issues.add(new Issue("ARC-V4012", pc, "parallel entry not found"));
+            }
             if (instruction.op() == Op.CALL_HOST) {
                 if (instruction.number() < 0 || instruction.number() > 32 || instruction.text().indexOf('\u0000') < 1)
                     issues.add(new Issue("ARC-V4006", pc, "invalid host descriptor"));
