@@ -39,10 +39,21 @@ class ArcVmTest {
     @Test void verifierRejectsInvalidJumpBeforeExecution() {
         var program = new ArcBytecode.Program("Bad",
                 List.of(new ArcBytecode.Instruction(ArcBytecode.Op.JUMP, "", 999, 0)),
-                Map.of("on:cast", 0), Set.of(), 1);
+                Map.of("on:cast", 0), Set.of(), Set.of(), 1);
         var result = new ArcVm().run(program, "on:cast", Map.of(), new ArcVm.Limits(10, 0), new NoopHost());
         assertEquals(ArcVm.Status.TRAPPED, result.status());
         assertEquals("ARC-V4004", result.code());
+    }
+
+    @Test void executesBoundedLocalFunction() {
+        var compiled = new ArcCompiler().compile("""
+            fn double_it(value: Int) -> Int { return value * 2; }
+            spell X { on cast { return double_it(4); } }
+            """);
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        var result = new ArcVm().run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), new NoopHost());
+        assertEquals(ArcVm.Status.COMPLETED, result.status());
+        assertEquals(8.0, result.value());
     }
 
     private static final class NoopHost implements ArcVm.Host {

@@ -97,3 +97,7 @@ Feature-gated / not represented as complete:
 - ArcSys-only fragments in loot/gacha.
 
 Production remains on the stable 1.7 line until the release-candidate migration and operational tests pass.
+
+## Advanced language specification follow-up
+
+The advanced ArcSys and Minecraft API specifications are accepted, but are not yet production-complete. The development branch now includes dimension-aware types, local functions, match expressions, state/requirement metadata, expanded events, Skript-style control sugar and the extended capability catalogue. Cooperative parallel execution, typed persistent TTL state, contracts, complete Result/Option semantics, the allowlisted Skript bridge and production Minecraft effects remain release blockers. See `docs/advanced-spec-coverage.md`.

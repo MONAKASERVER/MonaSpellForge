@@ -41,19 +41,27 @@ public final class ArcLexer {
             case '(' -> add(Type.LEFT_PAREN); case ')' -> add(Type.RIGHT_PAREN);
             case '{' -> add(Type.LEFT_BRACE); case '}' -> add(Type.RIGHT_BRACE);
             case '[' -> add(Type.LEFT_BRACKET); case ']' -> add(Type.RIGHT_BRACKET);
-            case ',' -> add(Type.COMMA); case '.' -> add(Type.DOT); case ':' -> add(Type.COLON); case ';' -> add(Type.SEMICOLON);
-            case '+' -> add(Type.PLUS); case '*' -> add(Type.STAR); case '%' -> add(Type.PERCENT);
-            case '-' -> add(match('>') ? Type.ARROW : Type.MINUS);
+            case ',' -> add(Type.COMMA);
+            case '.' -> {
+                if (match('.')) add(match('=') ? Type.RANGE_INCLUSIVE : Type.RANGE);
+                else add(Type.DOT);
+            }
+            case ':' -> add(match(':') ? Type.DOUBLE_COLON : Type.COLON); case ';' -> add(Type.SEMICOLON);
+            case '+' -> add(match('=') ? Type.PLUS_EQUAL : Type.PLUS);
+            case '*' -> add(match('=') ? Type.STAR_EQUAL : Type.STAR);
+            case '%' -> add(Type.PERCENT);
+            case '-' -> add(match('>') ? Type.ARROW : match('=') ? Type.MINUS_EQUAL : Type.MINUS);
             case '!' -> add(match('=') ? Type.BANG_EQUAL : Type.BANG);
-            case '=' -> add(match('=') ? Type.EQUAL_EQUAL : Type.EQUAL);
+            case '=' -> add(match('=') ? Type.EQUAL_EQUAL : match('>') ? Type.FAT_ARROW : Type.EQUAL);
             case '<' -> add(match('=') ? Type.LESS_EQUAL : Type.LESS);
             case '>' -> add(match('=') ? Type.GREATER_EQUAL : Type.GREATER);
             case '&' -> { if (match('&')) add(Type.AND_AND); else invalid("'&&'を使用してください"); }
             case '|' -> { if (match('|')) add(Type.OR_OR); else invalid("'||'を使用してください"); }
+            case '?' -> add(Type.QUESTION); case '@' -> add(Type.AT_SIGN);
             case '/' -> {
                 if (match('/')) while (!atEnd() && peek() != '\n') advance();
                 else if (match('*')) blockComment();
-                else add(Type.SLASH);
+                else add(match('=') ? Type.SLASH_EQUAL : Type.SLASH);
             }
             case ' ', '\r', '\t' -> { }
             case '\n' -> { line++; column = 1; }
@@ -97,13 +105,28 @@ public final class ArcLexer {
         boolean floating = false;
         if (peek() == '.' && Character.isDigit(peekNext())) { floating = true; advance(); while (Character.isDigit(peek())) advance(); }
         String number = source.substring(start, current);
-        if (!floating && (peek() == 't' || peek() == 's')) {
+        if (peek() == 't' || peek() == 's' || peek() == 'b' || peek() == 'd' || peek() == '%'
+                || (peek() == 'm' && peekNext() == 'p')) {
             char unit = advance();
-            long amount = Long.parseLong(number);
-            add(Type.DURATION, unit == 's' ? Math.multiplyExact(amount, 20L) : amount);
+            if (unit == 'm') advance();
+            double amount = Double.parseDouble(number);
+            SourceModel.Unit kind = switch (unit) {
+                case 't' -> SourceModel.Unit.TICKS;
+                case 's' -> SourceModel.Unit.TICKS;
+                case 'b' -> SourceModel.Unit.BLOCKS;
+                case 'm' -> SourceModel.Unit.MANA;
+                case '%' -> SourceModel.Unit.PERCENT;
+                case 'd' -> SourceModel.Unit.DAYS;
+                default -> throw new IllegalStateException();
+            };
+            if (unit == 's') amount *= 20.0;
+            add(Type.DURATION, new SourceModel.UnitValue(amount, kind));
             return;
         }
-        try { add(floating ? Type.FLOAT : Type.INT, floating ? Double.parseDouble(number) : Long.parseLong(number)); }
+        try {
+            if (floating) add(Type.FLOAT, Double.parseDouble(number));
+            else add(Type.INT, Long.parseLong(number));
+        }
         catch (NumberFormatException error) { invalid("数値が範囲外です"); }
     }
 
@@ -135,10 +158,25 @@ public final class ArcLexer {
         Map<String, Type> values = new HashMap<>();
         values.put("spell", Type.SPELL); values.put("module", Type.MODULE); values.put("use", Type.USE); values.put("fn", Type.FN);
         values.put("on", Type.ON); values.put("cast", Type.CAST); values.put("pulse", Type.PULSE); values.put("hit", Type.HIT);
-        values.put("kill", Type.KILL); values.put("damage_taken", Type.DAMAGE_TAKEN); values.put("let", Type.LET); values.put("const", Type.CONST);
+        values.put("kill", Type.KILL); values.put("damage_taken", Type.DAMAGE_TAKEN); values.put("damage", Type.DAMAGE); values.put("death", Type.DEATH);
+        values.put("enter", Type.ENTER); values.put("mana_below", Type.MANA_BELOW); values.put("spell_end", Type.SPELL_END);
+        values.put("signal", Type.SIGNAL); values.put("projectile_impact", Type.PROJECTILE_IMPACT);
+        values.put("let", Type.LET); values.put("const", Type.CONST); values.put("mut", Type.MUT);
         values.put("state", Type.STATE); values.put("if", Type.IF); values.put("else", Type.ELSE); values.put("match", Type.MATCH);
         values.put("for", Type.FOR); values.put("in", Type.IN); values.put("repeat", Type.REPEAT); values.put("break", Type.BREAK);
-        values.put("continue", Type.CONTINUE); values.put("return", Type.RETURN); values.put("true", Type.TRUE); values.put("false", Type.FALSE);
+        values.put("continue", Type.CONTINUE); values.put("return", Type.RETURN); values.put("guard", Type.GUARD); values.put("defer", Type.DEFER);
+        values.put("emit", Type.EMIT); values.put("chance", Type.CHANCE); values.put("wait", Type.WAIT); values.put("every", Type.EVERY);
+        values.put("loop", Type.LOOP); values.put("foreach", Type.FOREACH); values.put("parallel", Type.PARALLEL); values.put("await", Type.AWAIT);
+        values.put("after", Type.AFTER); values.put("atomic", Type.ATOMIC); values.put("transaction", Type.TRANSACTION);
+        values.put("visual", Type.VISUAL); values.put("combat", Type.COMBAT); values.put("pub", Type.PUB); values.put("private", Type.PRIVATE);
+        values.put("struct", Type.STRUCT); values.put("enum", Type.ENUM); values.put("type", Type.TYPE); values.put("trait", Type.TRAIT);
+        values.put("impl", Type.IMPL); values.put("effect", Type.EFFECT); values.put("uses", Type.USES); values.put("requires", Type.REQUIRES);
+        values.put("fragments", Type.FRAGMENTS); values.put("permission", Type.PERMISSION); values.put("ensures", Type.ENSURES);
+        values.put("persist", Type.PERSIST); values.put("select", Type.SELECT); values.put("where", Type.WHERE); values.put("order", Type.ORDER);
+        values.put("by", Type.BY); values.put("limit", Type.LIMIT); values.put("asc", Type.ASC); values.put("desc", Type.DESC);
+        values.put("apply", Type.APPLY); values.put("spawn", Type.SPAWN); values.put("raycast", Type.RAYCAST); values.put("with", Type.WITH);
+        values.put("within", Type.WITHIN); values.put("at", Type.AT); values.put("to", Type.TO);
+        values.put("true", Type.TRUE); values.put("false", Type.FALSE);
         values.put("none", Type.NONE); return Map.copyOf(values);
     }
 

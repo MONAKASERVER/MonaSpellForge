@@ -42,6 +42,7 @@ final class ArcSysService {
             response.addProperty("fuel", result.program().estimatedFuel());
             response.addProperty("hash", result.program().sha256());
             response.add("capabilities", strings(result.program().capabilities()));
+            response.add("requirements", strings(result.program().requirements()));
         }
         return response;
     }
@@ -51,11 +52,16 @@ final class ArcSysService {
         String source = source(payload);
         var result = compiler.compile(source);
         if (!result.valid()) return diagnostics(result);
+        verifyRequirements(player, result.program().requirements());
+        if (result.program().capabilities().stream().anyMatch(capability -> capability.startsWith("operator."))
+                && !player.hasPermission("monaspellforge.arcsys.operator"))
+            throw new ArcRequestException("OPERATOR_CAPABILITY", "運営専用Capabilityを使用しています");
         UUID spellId = payload.has("spellId") && !payload.get("spellId").isJsonNull() ? UUID.fromString(payload.get("spellId").getAsString()) : null;
         long baseRevision = payload.has("baseRevision") ? payload.get("baseRevision").getAsLong() : 0;
         try {
             var saved = database.deployArcSpell(player.getUniqueId(), spellId, baseRevision, result.program().spellName(),
-                    source, result.program().sha256(), result.program().encode(), String.join(",", result.program().capabilities()));
+                    source, result.program().sha256(), result.program().encode(), String.join(",", result.program().capabilities()),
+                    String.join(",", result.program().requirements()));
             JsonObject response = diagnostics(result);
             response.addProperty("spellId", saved.spellId().toString()); response.addProperty("revision", saved.revision());
             response.addProperty("activatedFromNextCast", true);
@@ -142,6 +148,30 @@ final class ArcSysService {
         if (source.isBlank() || source.length() > 23_000) throw new ArcRequestException("SOURCE_SIZE", "ArcSysソースのサイズが不正です");
         return source;
     }
+
+    private void verifyRequirements(Player player, Set<String> requirements) {
+        for (String requirement : requirements) {
+            if (requirement.startsWith("permission:")) {
+                String permission = requirement.substring("permission:".length());
+                if (!player.hasPermission(permission))
+                    throw new ArcRequestException("MISSING_PERMISSION", "必要権限を所持していません: " + permission);
+                continue;
+            }
+            if (!requirement.startsWith("fragment:")) continue;
+            String[] parts = requirement.split(":", 3);
+            String fragmentId = parts[1]; int minimumLevel = Integer.parseInt(parts[2]);
+            boolean found = false;
+            for (org.bukkit.inventory.ItemStack item : player.getInventory().getContents()) {
+                var validation = fragments.validateItem(item, player);
+                if (validation.valid() && validation.instance().fragmentId().equals(fragmentId)
+                        && validation.instance().level() >= minimumLevel) { found = true; break; }
+            }
+            if (!found) found = database.storedFragments(player.getUniqueId()).stream()
+                    .anyMatch(stored -> stored.fragmentId().equals(fragmentId) && stored.level() >= minimumLevel);
+            if (!found) throw new ArcRequestException("MISSING_FRAGMENT",
+                    "必要な欠片を所持していません: " + fragmentId + " Lv." + minimumLevel);
+        }
+    }
     private static JsonArray strings(Collection<String> values) { JsonArray result = new JsonArray(); values.forEach(result::add); return result; }
 
     static final class ArcRequestException extends RuntimeException {
@@ -152,12 +182,23 @@ final class ArcSysService {
     private static final class SimulationHost implements ArcVm.Host {
         public Object invoke(String api, List<Object> arguments, List<String> names, ArcVm.Execution execution) {
             return switch (api) {
-                case "mobs.hostile" -> List.of(Map.of("id", "simulation-target", "hp_ratio", 0.5));
+                case "mobs.hostile", "entities.hostile" -> List.of(Map.of("id", "simulation-target", "hp_ratio", 0.5));
                 case "target.nearest" -> Map.of("id", "simulation-target", "hp_ratio", 0.5);
-                case "spell.cast", "spell.effect", "world.particle" -> {
+                case "combat.can_attack" -> true;
+                case "entity.distance", "mana.current" -> 1.0;
+                case "raycast.entities" -> List.of();
+                case "raycast.blocks", "blocks.query", "items.inspect", "pdc.get" -> null;
+                case "spell.cast", "spell.effect", "world.particle", "particles.spiral", "particles.ring", "particles.sphere",
+                     "display.magic_circle", "display.item", "display.text", "virtual_structure.show", "combat.damage", "combat.apply",
+                     "mana.consume", "pdc.set", "time.after", "event.cancel", "skript.emit" -> {
                     execution.request(new ArcVm.EffectRequest(api, Map.of("arguments", arguments))); yield true;
                 }
                 case "math.clamp" -> Math.max(((Number) arguments.get(1)).doubleValue(), Math.min(((Number) arguments.get(2)).doubleValue(), ((Number) arguments.get(0)).doubleValue()));
+                case "random.chance" -> false;
+                case "time.wait", "event.emit", "state.set" -> {
+                    execution.request(new ArcVm.EffectRequest(api, Map.of("arguments", arguments))); yield true;
+                }
+                case "state.get" -> arguments.getFirst();
                 default -> null;
             };
         }

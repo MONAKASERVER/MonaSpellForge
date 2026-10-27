@@ -3,6 +3,7 @@ package net.monacraft.spellforge.arcsys.language;
 import net.monacraft.spellforge.arcsys.language.SourceModel.Span;
 
 import java.util.List;
+import java.util.Map;
 
 /** Immutable source AST. It deliberately contains no executable Java hooks. */
 public final class ArcAst {
@@ -16,9 +17,13 @@ public final class ArcAst {
         public Program { spells = List.copyOf(spells); }
     }
 
-    public record SpellDecl(String name, List<HandlerDecl> handlers,
+    public record SpellDecl(String name, Map<String, Integer> requiredFragments, List<String> requiredPermissions,
+                            List<VarDecl> states, List<HandlerDecl> handlers,
                             List<FunctionDecl> functions, Span span) implements Node {
         public SpellDecl {
+            requiredFragments = Map.copyOf(requiredFragments);
+            requiredPermissions = List.copyOf(requiredPermissions);
+            states = List.copyOf(states);
             handlers = List.copyOf(handlers);
             functions = List.copyOf(functions);
         }
@@ -28,7 +33,10 @@ public final class ArcAst {
         public FunctionDecl { parameters = List.copyOf(parameters); }
     }
 
-    public enum Trigger { CAST, PULSE, HIT, KILL, DAMAGE_TAKEN }
+    public enum Trigger {
+        CAST, PULSE, HIT, KILL, DAMAGE_TAKEN, DAMAGE, DEATH, ENTER,
+        MANA_BELOW, SPELL_END, SIGNAL, PROJECTILE_IMPACT
+    }
 
     public record HandlerDecl(Trigger trigger, Expr argument, Block body, Span span) implements Node { }
 
@@ -51,7 +59,7 @@ public final class ArcAst {
     public record ExprStmt(Expr expression, Span span) implements Stmt { }
 
     public sealed interface Expr extends Node permits Literal, Variable, Unary, Binary,
-        Assignment, Member, Call, ListExpr { }
+        Assignment, Member, Call, ListExpr, MatchExpr { }
 
     public record Literal(Object value, Span span) implements Expr { }
     public record Variable(String name, Span span) implements Expr { }
@@ -65,5 +73,15 @@ public final class ArcAst {
     public record CallArg(String name, Expr value, Span span) { }
     public record ListExpr(List<Expr> values, Span span) implements Expr {
         public ListExpr { values = List.copyOf(values); }
+    }
+
+    public sealed interface Pattern permits WildcardPattern, LiteralPattern, RangePattern, EnumPattern { Span span(); }
+    public record WildcardPattern(Span span) implements Pattern { }
+    public record LiteralPattern(Object value, Span span) implements Pattern { }
+    public record RangePattern(Object start, Object end, boolean inclusive, Span span) implements Pattern { }
+    public record EnumPattern(String name, Span span) implements Pattern { }
+    public record MatchArm(Pattern pattern, Expr value, Span span) { }
+    public record MatchExpr(Expr subject, List<MatchArm> arms, Span span) implements Expr {
+        public MatchExpr { arms = List.copyOf(arms); }
     }
 }

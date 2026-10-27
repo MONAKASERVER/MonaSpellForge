@@ -4,8 +4,7 @@ import net.monacraft.spellforge.arcsys.language.ArcAst.*;
 import net.monacraft.spellforge.arcsys.language.SourceModel.*;
 import net.monacraft.spellforge.arcsys.language.Token.Type;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 import static net.monacraft.spellforge.arcsys.language.Token.Type.*;
 
@@ -32,13 +31,29 @@ public final class ArcParser {
 
     public ParseResult parseProgram() {
         List<SpellDecl> spells = new ArrayList<>();
+        List<FunctionDecl> globalFunctions = new ArrayList<>();
+        List<VarDecl> globalConstants = new ArrayList<>();
         Token first = peek();
         while (!atEnd()) {
             try {
-                spells.add(spell());
+                while (match(AT_SIGN)) skipAnnotation();
+                if (match(MODULE, USE)) skipUntilSemicolon();
+                else if (match(CONST)) globalConstants.add(variable(previous()));
+                else if (match(PUB, PRIVATE, EFFECT)) {
+                    if (match(FN)) globalFunctions.add(function(previous()));
+                    else skipTopLevelDeclaration();
+                }
+                else if (match(FN)) globalFunctions.add(function(previous()));
+                else if (check(SPELL)) spells.add(spell());
+                else if (match(STRUCT, ENUM, TYPE, TRAIT, IMPL)) skipTopLevelDeclaration();
+                else throw error(peek(), "ARC-E1000", "トップレベル宣言が不正です", "module, use, const, fn, struct, enum, type, spell を使用してください");
             } catch (ParseFailure ignored) {
                 synchronizeTopLevel();
             }
+        }
+        if (!globalFunctions.isEmpty() || !globalConstants.isEmpty()) {
+            spells = spells.stream().map(spell -> new SpellDecl(spell.name(), spell.requiredFragments(), spell.requiredPermissions(),
+                    concat(globalConstants, spell.states()), spell.handlers(), concat(globalFunctions, spell.functions()), spell.span())).toList();
         }
         Span span = spells.isEmpty() ? first.span() : join(first.span(), previous().span());
         return new ParseResult(new Program(spells, span), diagnostics);
@@ -46,21 +61,30 @@ public final class ArcParser {
 
     private SpellDecl spell() {
         Token begin = consume(SPELL, "ARC-E1001", "'spell' が必要です");
-        Token name = consume(IDENT, "ARC-E1002", "術式名が必要です");
+        Token name;
+        if (match(IDENT, STRING)) name = previous();
+        else throw error(peek(), "ARC-E1002", "術式名が必要です");
         consume(LEFT_BRACE, "ARC-E1003", "術式本体の '{' が必要です");
         List<HandlerDecl> handlers = new ArrayList<>();
         List<FunctionDecl> functions = new ArrayList<>();
+        List<VarDecl> states = new ArrayList<>();
+        Map<String, Integer> requiredFragments = new LinkedHashMap<>();
+        List<String> requiredPermissions = new ArrayList<>();
         while (!check(RIGHT_BRACE) && !atEnd()) {
             try {
+                while (match(AT_SIGN)) skipAnnotation();
                 if (match(ON)) handlers.add(handler(previous()));
                 else if (match(FN)) functions.add(function(previous()));
+                else if (match(STATE)) states.add(variable(previous()));
+                else if (match(REQUIRES)) parseRequires(requiredFragments, requiredPermissions);
                 else throw error(peek(), "ARC-E1004", "術式直下には on または fn を記述してください", "イベントハンドラか関数へ移動してください");
             } catch (ParseFailure ignored) {
                 synchronizeMember();
             }
         }
         Token end = consume(RIGHT_BRACE, "ARC-E1005", "術式本体を閉じる '}' が必要です");
-        return new SpellDecl(name.lexeme(), handlers, functions, join(begin.span(), end.span()));
+        return new SpellDecl(name.literal() instanceof String value ? value : name.lexeme(), requiredFragments, requiredPermissions,
+                states, handlers, functions, join(begin.span(), end.span()));
     }
 
     private HandlerDecl handler(Token begin) {
@@ -70,10 +94,21 @@ public final class ArcParser {
         else if (match(HIT)) trigger = Trigger.HIT;
         else if (match(KILL)) trigger = Trigger.KILL;
         else if (match(DAMAGE_TAKEN)) trigger = Trigger.DAMAGE_TAKEN;
+        else if (match(DAMAGE)) trigger = Trigger.DAMAGE;
+        else if (match(DEATH)) trigger = Trigger.DEATH;
+        else if (match(ENTER)) trigger = Trigger.ENTER;
+        else if (match(MANA_BELOW)) trigger = Trigger.MANA_BELOW;
+        else if (match(SPELL_END)) trigger = Trigger.SPELL_END;
+        else if (match(SIGNAL)) trigger = Trigger.SIGNAL;
+        else if (match(PROJECTILE_IMPACT)) trigger = Trigger.PROJECTILE_IMPACT;
         else throw error(peek(), "ARC-E1010", "未知のイベントです", "cast, pulse, hit, kill, damage_taken のいずれかを使用してください");
         Expr argument = null;
         if (match(LEFT_PAREN)) {
-            if (!check(RIGHT_PAREN)) argument = expression();
+            if (!check(RIGHT_PAREN)) {
+                List<Expr> arguments = new ArrayList<>();
+                do { arguments.add(expression()); } while (match(COMMA));
+                argument = arguments.size() == 1 ? arguments.getFirst() : new ListExpr(arguments, join(arguments.getFirst().span(), arguments.getLast().span()));
+            }
             consume(RIGHT_PAREN, "ARC-E1011", "イベント引数の ')' が必要です");
         }
         Block body = block();
@@ -88,9 +123,11 @@ public final class ArcParser {
             do {
                 if (parameters.size() >= 16) throw error(peek(), "ARC-E1022", "関数引数は16個までです", "関数を分割してください");
                 parameters.add(consume(IDENT, "ARC-E1023", "引数名が必要です").lexeme());
+                if (match(COLON)) skipTypeReference();
             } while (match(COMMA));
         }
         consume(RIGHT_PAREN, "ARC-E1024", "引数リストの ')' が必要です");
+        if (match(ARROW)) skipTypeReferenceBeforeBlock();
         Block body = block();
         return new FunctionDecl(name.lexeme(), parameters, body, join(begin.span(), body.span()));
     }
@@ -114,6 +151,16 @@ public final class ArcParser {
         if (match(IF)) return ifStatement(previous());
         if (match(FOR)) return forStatement(previous());
         if (match(REPEAT)) return repeatStatement(previous());
+        if (match(LOOP, FOREACH)) return forStatement(previous());
+        if (match(GUARD)) return guardStatement(previous());
+        if (match(CHANCE)) return chanceStatement(previous());
+        if (match(EVERY)) return everyStatement(previous());
+        if (match(AFTER)) return afterStatement(previous());
+        if (match(CAST)) return castStatement(previous());
+        if (match(APPLY)) return applyStatement(previous());
+        if (match(EMIT)) { Token begin = previous(); match(SIGNAL); return hostStatement(begin, "event.emit"); }
+        if (match(WAIT)) return hostStatement(previous(), "time.wait");
+        if (match(ATOMIC, TRANSACTION, VISUAL, COMBAT)) return block();
         if (match(RETURN)) return returnStatement(previous());
         if (match(BREAK)) { Token t = previous(); finishStatement(); return new BreakStmt(t.span()); }
         if (match(CONTINUE)) { Token t = previous(); finishStatement(); return new ContinueStmt(t.span()); }
@@ -124,9 +171,12 @@ public final class ArcParser {
     }
 
     private VarDecl variable(Token begin) {
+        if (begin.type() == LET) match(MUT);
         Token name = consume(IDENT, "ARC-E1040", "変数名が必要です");
+        if (match(COLON)) skipTypeReference();
         consume(EQUAL, "ARC-E1041", "変数の初期値が必要です");
         Expr initializer = expression();
+        if (match(PERSIST)) skipBalancedCall();
         Token end = finishStatement();
         Binding binding = switch (begin.type()) { case LET -> Binding.LET; case CONST -> Binding.CONST; default -> Binding.STATE; };
         return new VarDecl(binding, name.lexeme(), initializer, join(begin.span(), end.span()));
@@ -150,11 +200,175 @@ public final class ArcParser {
     }
 
     private RepeatStmt repeatStatement(Token begin) {
-        consume(LEFT_PAREN, "ARC-E1070", "repeat 回数の '(' が必要です");
+        boolean parenthesized = match(LEFT_PAREN);
         Expr count = expression();
-        consume(RIGHT_PAREN, "ARC-E1071", "repeat 回数の ')' が必要です");
+        if (parenthesized) consume(RIGHT_PAREN, "ARC-E1071", "repeat 回数の ')' が必要です");
         Block body = block();
         return new RepeatStmt(count, body, join(begin.span(), body.span()));
+    }
+
+    private Stmt guardStatement(Token begin) {
+        Expr condition = expression();
+        consume(ELSE, "ARC-E1072", "guard には else が必要です");
+        Block failure = block();
+        Expr inverted = new Unary(BANG, condition, condition.span());
+        return new IfStmt(inverted, failure, null, join(begin.span(), failure.span()));
+    }
+
+    private Stmt chanceStatement(Token begin) {
+        Expr probability = expression();
+        Block body = block();
+        Expr callee = qualifiedVariable("random", "chance", begin.span());
+        Call call = new Call(callee, List.of(new CallArg(null, probability, probability.span())), join(begin.span(), probability.span()));
+        return new IfStmt(call, body, null, join(begin.span(), body.span()));
+    }
+
+    private Stmt hostStatement(Token begin, String api) {
+        Expr value = expression();
+        Token end = finishStatement();
+        String[] parts = api.split("\\.");
+        Expr callee = qualifiedVariable(parts[0], parts[1], begin.span());
+        Call call = new Call(callee, List.of(new CallArg(null, value, value.span())), join(begin.span(), value.span()));
+        return new ExprStmt(call, join(begin.span(), end.span()));
+    }
+
+    private Stmt castStatement(Token begin) {
+        Token spellName = consumeAny("ARC-E1073", "castする術式名が必要です", STRING, IDENT);
+        consume(AT, "ARC-E1074", "castには at <target> が必要です");
+        Expr target = expression(); Token end = finishStatement();
+        Expr name = new Literal(spellName.literal() instanceof String value ? value : spellName.lexeme(), spellName.span());
+        Call call = hostCall("spell", "cast", begin.span(), List.of(name, target));
+        return new ExprStmt(call, join(begin.span(), end.span()));
+    }
+
+    private Stmt applyStatement(Token begin) {
+        Token effect = consumeAny("ARC-E1075", "applyする効果名が必要です", STRING, IDENT);
+        consume(TO, "ARC-E1076", "applyには to <target> が必要です");
+        Expr target = expression();
+        consume(FOR, "ARC-E1077", "applyには for <duration> が必要です");
+        Expr duration = expression(); Token end = finishStatement();
+        Expr effectName = new Literal(effect.literal() instanceof String value ? value : effect.lexeme(), effect.span());
+        Call call = hostCall("combat", "apply", begin.span(), List.of(effectName, target, duration));
+        return new ExprStmt(call, join(begin.span(), end.span()));
+    }
+
+    private Stmt everyStatement(Token begin) {
+        Expr interval = expression();
+        consume(FOR, "ARC-E1078", "everyには for <duration> が必要です");
+        Expr duration = expression();
+        Block original = block();
+        long count = boundedPeriodCount(interval, duration);
+        Call waitCall = hostCall("time", "wait", begin.span(), List.of(interval));
+        List<Stmt> statements = new ArrayList<>(original.statements());
+        statements.add(new ExprStmt(waitCall, waitCall.span()));
+        Block body = new Block(statements, original.span());
+        return new RepeatStmt(new Literal(count, duration.span()), body, join(begin.span(), original.span()));
+    }
+
+    private Stmt afterStatement(Token begin) {
+        Expr delay = expression(); Block original = block();
+        Call waitCall = hostCall("time", "wait", begin.span(), List.of(delay));
+        List<Stmt> statements = new ArrayList<>(); statements.add(new ExprStmt(waitCall, waitCall.span())); statements.addAll(original.statements());
+        return new Block(statements, join(begin.span(), original.span()));
+    }
+
+    private long boundedPeriodCount(Expr interval, Expr duration) {
+        if (!(interval instanceof Literal i) || !(duration instanceof Literal d)
+                || !(i.value() instanceof UnitValue iu) || !(d.value() instanceof UnitValue du)
+                || (iu.unit() != Unit.TICKS && iu.unit() != Unit.DAYS)
+                || (du.unit() != Unit.TICKS && du.unit() != Unit.DAYS) || iu.ticks() <= 0)
+            throw error(peek(), "ARC-E1079", "everyの間隔と期間は固定Durationで指定してください");
+        long count = du.ticks() / iu.ticks();
+        if (count < 1 || count > 256) throw error(peek(), "ARC-E1081", "everyの実行回数は1〜256回です");
+        return count;
+    }
+
+    private Call hostCall(String namespace, String member, Span begin, List<Expr> arguments) {
+        Expr callee = qualifiedVariable(namespace, member, begin);
+        List<CallArg> args = arguments.stream().map(value -> new CallArg(null, value, value.span())).toList();
+        return new Call(callee, args, join(begin, arguments.getLast().span()));
+    }
+
+    private Expr qualifiedVariable(String namespace, String member, Span span) {
+        Variable root = new Variable(namespace, span);
+        return new Member(root, member, span);
+    }
+
+    private void skipTypeReference() {
+        int genericDepth = 0;
+        while (!atEnd()) {
+            if (check(LESS)) { genericDepth++; advance(); continue; }
+            if (check(GREATER) && genericDepth > 0) { genericDepth--; advance(); continue; }
+            if (genericDepth == 0 && (check(EQUAL) || check(COMMA) || check(RIGHT_PAREN))) return;
+            advance();
+        }
+    }
+
+    private void skipTypeReferenceBeforeBlock() {
+        int genericDepth = 0;
+        while (!atEnd()) {
+            if (check(LESS)) { genericDepth++; advance(); continue; }
+            if (check(GREATER) && genericDepth > 0) { genericDepth--; advance(); continue; }
+            if (genericDepth == 0 && check(LEFT_BRACE)) return;
+            advance();
+        }
+    }
+
+    private void skipAnnotation() {
+        if (check(IDENT)) advance();
+        skipBalancedCall();
+    }
+
+    private void skipUntilSemicolon() {
+        while (!atEnd() && !match(SEMICOLON)) advance();
+    }
+
+    private void skipTopLevelDeclaration() {
+        int braces = 0;
+        while (!atEnd()) {
+            if (match(LEFT_BRACE)) braces++;
+            else if (match(RIGHT_BRACE)) { if (--braces <= 0) return; }
+            else if (braces == 0 && match(SEMICOLON)) return;
+            else advance();
+        }
+    }
+
+    private void parseRequires(Map<String, Integer> fragments, List<String> permissions) {
+        if (match(FRAGMENTS)) {
+            consume(LEFT_BRACE, "ARC-E1150", "requires fragments の '{' が必要です");
+            while (!check(RIGHT_BRACE) && !atEnd()) {
+                Token id = consume(IDENT, "ARC-E1151", "欠片IDが必要です");
+                consume(COLON, "ARC-E1152", "欠片の最低Lvが必要です");
+                Token level = consume(INT, "ARC-E1153", "欠片Lvは整数で指定してください");
+                int value = Math.toIntExact((Long) level.literal());
+                if (value < 1 || value > 255) throw error(level, "ARC-E1154", "欠片Lvは1〜255です");
+                fragments.merge(id.lexeme(), value, Math::max);
+                match(COMMA, SEMICOLON);
+            }
+            consume(RIGHT_BRACE, "ARC-E1155", "requires fragments の '}' が必要です");
+            return;
+        }
+        if (match(PERMISSION)) {
+            Token permission = consumeAny("ARC-E1156", "権限名が必要です", STRING, IDENT);
+            permissions.add(permission.literal() instanceof String value ? value : permission.lexeme());
+            match(SEMICOLON);
+            return;
+        }
+        throw error(peek(), "ARC-E1157", "requiresにはfragmentsまたはpermissionが必要です");
+    }
+
+    private static <T> List<T> concat(List<T> first, List<T> second) {
+        List<T> result = new ArrayList<>(first.size() + second.size()); result.addAll(first); result.addAll(second); return result;
+    }
+
+    private void skipBalancedCall() {
+        if (!match(LEFT_PAREN)) return;
+        int nesting = 1;
+        while (!atEnd() && nesting > 0) {
+            if (match(LEFT_PAREN)) nesting++;
+            else if (match(RIGHT_PAREN)) nesting--;
+            else advance();
+        }
     }
 
     private ReturnStmt returnStatement(Token begin) {
@@ -173,10 +387,15 @@ public final class ArcParser {
 
     private Expr assignment() {
         Expr left = or();
-        if (match(EQUAL)) {
+        if (match(EQUAL, PLUS_EQUAL, MINUS_EQUAL, STAR_EQUAL, SLASH_EQUAL)) {
+            Type assignmentOperator = previous().type();
             Expr value = assignment();
             if (!(left instanceof Variable) && !(left instanceof Member))
                 throw error(previous(), "ARC-E1100", "代入先が不正です", "変数またはプロパティへ代入してください");
+            if (assignmentOperator != EQUAL) {
+                Type binary = switch (assignmentOperator) { case PLUS_EQUAL -> PLUS; case MINUS_EQUAL -> MINUS; case STAR_EQUAL -> STAR; default -> SLASH; };
+                value = new Binary(left, binary, value, join(left.span(), value.span()));
+            }
             return new Assignment(left, value, join(left.span(), value.span()));
         }
         return left;
@@ -212,9 +431,9 @@ public final class ArcParser {
         Expr expr = primary();
         while (true) {
             if (match(LEFT_PAREN)) expr = finishCall(expr);
-            else if (match(DOT)) {
+            else if (match(DOT, DOUBLE_COLON)) {
                 Token name;
-                if (match(IDENT, CAST)) name = previous();
+                if (isPropertyName(peek().type())) name = advance();
                 else throw error(peek(), "ARC-E1110", "プロパティ名が必要です");
                 expr = new Member(expr, name.lexeme(), join(expr.span(), name.span()));
             } else break;
@@ -229,7 +448,7 @@ public final class ArcParser {
                 if (args.size() >= 32) throw error(peek(), "ARC-E1120", "呼び出し引数は32個までです", "入力を分割してください");
                 Token begin = peek();
                 String name = null;
-                if (check(IDENT) && checkNext(COLON)) { name = advance().lexeme(); advance(); }
+                if (isPropertyName(peek().type()) && checkNext(COLON)) { name = advance().lexeme(); advance(); }
                 Expr value = expression();
                 args.add(new CallArg(name, value, join(begin.span(), value.span())));
             } while (match(COMMA));
@@ -239,6 +458,7 @@ public final class ArcParser {
     }
 
     private Expr primary() {
+        if (match(MATCH)) return matchExpression(previous());
         if (match(FALSE)) return new Literal(false, previous().span());
         if (match(TRUE)) return new Literal(true, previous().span());
         if (match(NONE)) return new Literal(null, previous().span());
@@ -260,6 +480,49 @@ public final class ArcParser {
         throw error(peek(), "ARC-E1132", "式が必要です", "値、変数、または関数呼び出しを記述してください");
     }
 
+    private Expr matchExpression(Token begin) {
+        Expr subject = expression();
+        consume(LEFT_BRACE, "ARC-E1140", "match本体の '{' が必要です");
+        List<MatchArm> arms = new ArrayList<>();
+        while (!check(RIGHT_BRACE) && !atEnd()) {
+            Pattern pattern = matchPattern();
+            consume(FAT_ARROW, "ARC-E1141", "matchアームの '=>' が必要です");
+            Expr value = expression();
+            arms.add(new MatchArm(pattern, value, join(pattern.span(), value.span())));
+            match(COMMA, SEMICOLON);
+        }
+        Token end = consume(RIGHT_BRACE, "ARC-E1142", "match本体の '}' が必要です");
+        if (arms.isEmpty()) throw error(end, "ARC-E1143", "matchには1つ以上のアームが必要です");
+        return new MatchExpr(subject, arms, join(begin.span(), end.span()));
+    }
+
+    private Pattern matchPattern() {
+        Token begin = peek();
+        if (match(IDENT) && "_".equals(previous().lexeme())) return new WildcardPattern(previous().span());
+        if (match(INT, FLOAT, STRING, DURATION, TRUE, FALSE)) {
+            Token first = previous();
+            Object value = first.type() == TRUE ? true : first.type() == FALSE ? false : first.literal();
+            if (match(RANGE, RANGE_INCLUSIVE)) {
+                boolean inclusive = previous().type() == RANGE_INCLUSIVE;
+                Token end = consumeAny("ARC-E1144", "範囲パターンの終端値が必要です", INT, FLOAT, DURATION);
+                return new RangePattern(value, end.literal(), inclusive, join(first.span(), end.span()));
+            }
+            return new LiteralPattern(value, first.span());
+        }
+        if (match(IDENT)) {
+            StringBuilder name = new StringBuilder(previous().lexeme());
+            Span span = previous().span();
+            if (match(DOUBLE_COLON)) { Token part = consume(IDENT, "ARC-E1145", "列挙値が必要です"); name.append("::").append(part.lexeme()); span = join(span, part.span()); }
+            return new EnumPattern(name.toString(), span);
+        }
+        throw error(begin, "ARC-E1146", "matchパターンが不正です");
+    }
+
+    private Token consumeAny(String code, String message, Type... types) {
+        if (match(types)) return previous();
+        throw error(peek(), code, message);
+    }
+
     private void enter(Token token) {
         depth++;
         if (depth > MAX_PARSE_DEPTH) throw error(token, "ARC-E1099", "構文のネストが深すぎます", "ブロックを分割してください");
@@ -273,6 +536,14 @@ public final class ArcParser {
     private Token consume(Type type, String code, String message) { if (check(type)) return advance(); throw error(peek(), code, message); }
     private boolean match(Type... types) { for (Type type : types) if (check(type)) { advance(); return true; } return false; }
     private boolean check(Type type) { return peek().type() == type; }
+    private static boolean isPropertyName(Type type) {
+        return switch (type) {
+            case IDENT, CAST, WAIT, SIGNAL, SPAWN, RAYCAST, APPLY, LIMIT, ORDER, BY, WHERE,
+                 ASC, DESC, ENTER, DAMAGE, DEATH, PULSE, HIT, KILL, SPELL_END, PROJECTILE_IMPACT,
+                 STATE, TYPE, EFFECT, PERMISSION, FRAGMENTS, WITH, WITHIN, AT, TO -> true;
+            default -> false;
+        };
+    }
     private boolean checkNext(Type type) { return current + 1 < tokens.size() && tokens.get(current + 1).type() == type; }
     private Token advance() { if (!atEnd()) current++; return previous(); }
     private boolean atEnd() { return peek().type() == EOF; }

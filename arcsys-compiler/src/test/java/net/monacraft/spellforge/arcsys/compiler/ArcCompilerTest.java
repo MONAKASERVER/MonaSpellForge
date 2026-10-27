@@ -26,4 +26,13 @@ class ArcCompilerTest {
         assertFalse(result.valid());
         assertTrue(result.diagnostics().stream().anyMatch(d -> d.code().equals("ARC-E2030")));
     }
+
+    @Test void compilesTypedLocalFunctionCalls() {
+        var result = new ArcCompiler().compile("""
+            fn double_it(value: Int) -> Int { return value * 2; }
+            spell X { on cast { let result = double_it(4); spell.cast("TEST", result); } }
+            """);
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        assertTrue(result.program().instructions().stream().anyMatch(i -> i.op() == ArcBytecode.Op.CALL && i.text().equals("double_it")));
+    }
 }

@@ -16,7 +16,7 @@ import java.util.TreeMap;
 public final class ArcBytecode {
     private ArcBytecode() { }
 
-    public static final int FORMAT_VERSION = 1;
+    public static final int FORMAT_VERSION = 2;
 
     public enum Op {
         PUSH_NONE, PUSH_BOOL, PUSH_LONG, PUSH_DOUBLE, PUSH_STRING,
@@ -24,7 +24,7 @@ public final class ArcBytecode {
         ADD, SUB, MUL, DIV, MOD, NEGATE, NOT,
         EQ, NE, LT, LE, GT, GE, AND, OR,
         GET_MEMBER, MAKE_LIST,
-        CALL_HOST,
+        CALL_HOST, CALL,
         JUMP, JUMP_IF_FALSE,
         ITER_INIT, ITER_HAS_NEXT, ITER_NEXT,
         RETURN, HALT
@@ -43,11 +43,12 @@ public final class ArcBytecode {
 
     public record Program(String spellName, List<Instruction> instructions,
                           Map<String, Integer> entryPoints, Set<String> capabilities,
-                          int estimatedFuel) {
+                          Set<String> requirements, int estimatedFuel) {
         public Program {
             instructions = List.copyOf(instructions);
             entryPoints = Map.copyOf(new TreeMap<>(entryPoints));
             capabilities = Set.copyOf(capabilities);
+            requirements = Set.copyOf(requirements);
         }
 
         public byte[] encode() {
@@ -65,6 +66,9 @@ public final class ArcBytecode {
                 var caps = capabilities.stream().sorted().toList();
                 out.writeInt(caps.size());
                 for (String capability : caps) writeUtf8(out, capability);
+                var requirementsSorted = requirements.stream().sorted().toList();
+                out.writeInt(requirementsSorted.size());
+                for (String requirement : requirementsSorted) writeUtf8(out, requirement);
                 out.writeInt(estimatedFuel);
                 out.writeInt(instructions.size());
                 for (Instruction instruction : instructions) {

@@ -3,6 +3,7 @@ package net.monacraft.spellforge.arcsys.compiler;
 import net.monacraft.spellforge.arcsys.compiler.ArcBytecode.*;
 import net.monacraft.spellforge.arcsys.language.ArcAst.*;
 import net.monacraft.spellforge.arcsys.language.ArcParser;
+import net.monacraft.spellforge.arcsys.language.ArcTypeChecker;
 import net.monacraft.spellforge.arcsys.language.SourceModel.Diagnostic;
 import net.monacraft.spellforge.arcsys.language.SourceModel.Severity;
 import net.monacraft.spellforge.arcsys.language.Token.Type;
@@ -20,6 +21,8 @@ public final class ArcCompiler {
         var parsed = ArcParser.parse(source);
         List<Diagnostic> diagnostics = new ArrayList<>(parsed.diagnostics());
         if (!parsed.valid() || parsed.program().spells().isEmpty()) return new CompileResult(null, diagnostics);
+        diagnostics.addAll(new ArcTypeChecker().check(parsed.program()));
+        if (diagnostics.stream().anyMatch(d -> d.severity() == Severity.ERROR)) return new CompileResult(null, diagnostics);
         if (parsed.program().spells().size() != 1) {
             diagnostics.add(new Diagnostic("ARC-E2001", Severity.ERROR, "1ファイルには術式を1つだけ定義できます",
                 parsed.program().span(), "spell 定義を別ファイルへ分割してください"));
@@ -45,10 +48,16 @@ public final class ArcCompiler {
         private final List<Diagnostic> diagnostics;
         private int synthetic;
         private int fuel;
+        private Set<String> stateNames = Set.of();
+        private Set<String> functionNames = Set.of();
+        private final Deque<LoopContext> loops = new ArrayDeque<>();
 
         private Builder(List<Diagnostic> diagnostics) { this.diagnostics = diagnostics; }
 
         ArcBytecode.Program compile(SpellDecl spell) {
+            stateNames = spell.states().stream().filter(value -> value.binding() == Binding.STATE).map(VarDecl::name)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            functionNames = spell.functions().stream().map(FunctionDecl::name).collect(java.util.stream.Collectors.toUnmodifiableSet());
             for (HandlerDecl handler : spell.handlers()) {
                 String entry = "on:" + handler.trigger().name().toLowerCase(Locale.ROOT);
                 if (entries.putIfAbsent(entry, code.size()) != null) {
@@ -56,17 +65,31 @@ public final class ArcCompiler {
                     continue;
                 }
                 if (handler.argument() != null) { expression(handler.argument()); emit(STORE, "$event_arg", 0, 0); }
+                for (VarDecl state : spell.states()) {
+                    expression(state.initializer());
+                    if (state.binding() == Binding.STATE) {
+                        emit(PUSH_STRING, state.name(), 0, 0);
+                        emit(CALL_HOST, "state.get\u0000default,name", 2, 0);
+                        capabilities.add("state.read");
+                    }
+                    emit(STORE, state.name(), 0, 0);
+                }
                 block(handler.body());
                 emit(PUSH_NONE); emit(RETURN);
             }
             for (FunctionDecl function : spell.functions()) {
                 String entry = "fn:" + function.name();
                 if (entries.putIfAbsent(entry, code.size()) != null) error("ARC-E2003", "関数名が重複しています: " + function.name(), function, "名前を変更してください");
+                List<String> parameters = function.parameters();
+                for (int index = parameters.size() - 1; index >= 0; index--) emit(STORE, parameters.get(index), 0, 0);
                 block(function.body()); emit(PUSH_NONE); emit(RETURN);
             }
             emit(HALT);
             if (code.size() > MAX_INSTRUCTIONS) error("ARC-E2004", "命令数が上限を超えています", spell, "術式を分割してください");
-            return new ArcBytecode.Program(spell.name(), code, entries, capabilities, Math.max(fuel, code.size()));
+            Set<String> requirements = new TreeSet<>();
+            spell.requiredFragments().forEach((id, level) -> requirements.add("fragment:" + id + ":" + level));
+            spell.requiredPermissions().forEach(permission -> requirements.add("permission:" + permission));
+            return new ArcBytecode.Program(spell.name(), code, entries, capabilities, requirements, Math.max(fuel, code.size()));
         }
 
         void block(Block block) { for (Stmt statement : block.statements()) statement(statement); }
@@ -85,8 +108,14 @@ public final class ArcCompiler {
                 case RepeatStmt r -> compileRepeat(r);
                 case ForStmt f -> compileFor(f);
                 case ReturnStmt r -> { if (r.value() == null) emit(PUSH_NONE); else expression(r.value()); emit(RETURN); }
-                case BreakStmt ignored -> error("ARC-E2010", "break は現在のArcVMプロファイルでは使用できません", stmt, "条件付き repeat を使用してください");
-                case ContinueStmt ignored -> error("ARC-E2011", "continue は現在のArcVMプロファイルでは使用できません", stmt, "if で処理を囲んでください");
+                case BreakStmt ignored -> {
+                    if (loops.isEmpty()) error("ARC-E2010", "break はループ内だけで使用できます", stmt, "forまたはrepeat内へ移動してください");
+                    else loops.peek().breaks.add(jump(JUMP));
+                }
+                case ContinueStmt ignored -> {
+                    if (loops.isEmpty()) error("ARC-E2011", "continue はループ内だけで使用できます", stmt, "forまたはrepeat内へ移動してください");
+                    else loops.peek().continues.add(jump(JUMP));
+                }
             }
         }
 
@@ -96,9 +125,11 @@ public final class ArcCompiler {
             int start = code.size();
             emit(LOAD, counter, 0, 0); emit(PUSH_LONG, "", 0, 0); emit(GT);
             int exit = jump(JUMP_IF_FALSE);
-            block(repeat.body());
+            LoopContext context = new LoopContext(); loops.push(context);
+            block(repeat.body()); loops.pop();
+            int continueTarget = code.size(); context.continues.forEach(at -> patchTo(at, continueTarget));
             emit(LOAD, counter, 0, 0); emit(PUSH_LONG, "", 1, 0); emit(SUB); emit(STORE, counter, 0, 0);
-            emit(JUMP, "", start, 0); patch(exit);
+            emit(JUMP, "", start, 0); patch(exit); context.breaks.forEach(this::patch);
             fuel += 16;
         }
 
@@ -109,7 +140,10 @@ public final class ArcCompiler {
             emit(LOAD, iterator, 0, 0); emit(ITER_HAS_NEXT);
             int exit = jump(JUMP_IF_FALSE);
             emit(LOAD, iterator, 0, 0); emit(ITER_NEXT); emit(STORE, loop.variable(), 0, 0);
-            block(loop.body()); emit(JUMP, "", start, 0); patch(exit);
+            LoopContext context = new LoopContext(); loops.push(context);
+            block(loop.body()); loops.pop();
+            int continueTarget = code.size(); context.continues.forEach(at -> patchTo(at, continueTarget));
+            emit(JUMP, "", start, 0); patch(exit); context.breaks.forEach(this::patch);
             fuel += 32;
         }
 
@@ -121,17 +155,58 @@ public final class ArcCompiler {
                 case Unary u -> { expression(u.operand()); emit(u.operator() == Type.MINUS ? NEGATE : NOT); }
                 case Binary b -> { expression(b.left()); expression(b.right()); emit(binaryOp(b.operator())); }
                 case Assignment a -> {
-                    if (a.target() instanceof Variable v) { expression(a.value()); emit(DUP); emit(STORE, v.name(), 0, 0); }
+                    if (a.target() instanceof Variable v) {
+                        expression(a.value()); emit(DUP); emit(STORE, v.name(), 0, 0);
+                        if (stateNames.contains(v.name())) {
+                            emit(DUP); emit(PUSH_STRING, v.name(), 0, 0);
+                            emit(CALL_HOST, "state.set\u0000value,name", 2, 0); emit(POP);
+                            capabilities.add("state.write");
+                        }
+                    }
                     else error("ARC-E2020", "プロパティへの代入は許可されていません", a, "ローカル変数へ代入してください");
                 }
                 case Member m -> { expression(m.receiver()); emit(GET_MEMBER, m.name(), 0, 0); }
                 case Call c -> call(c);
+                case MatchExpr m -> matchExpression(m);
             }
+        }
+
+        void matchExpression(MatchExpr match) {
+            String subject = "$match" + synthetic++;
+            expression(match.subject()); emit(STORE, subject, 0, 0);
+            List<Integer> ends = new ArrayList<>();
+            boolean hasWildcard = false;
+            for (MatchArm arm : match.arms()) {
+                int next = -1;
+                if (!(arm.pattern() instanceof WildcardPattern)) {
+                    emit(LOAD, subject, 0, 0);
+                    if (arm.pattern() instanceof LiteralPattern literal) { literal(literal.value()); emit(EQ); }
+                    else if (arm.pattern() instanceof EnumPattern enumeration) { emit(PUSH_STRING, enumeration.name(), 0, 0); emit(EQ); }
+                    else if (arm.pattern() instanceof RangePattern range) {
+                        emit(DUP); literal(range.start()); emit(GE);
+                        emit(LOAD, subject, 0, 0); literal(range.end()); emit(range.inclusive() ? LE : LT); emit(AND);
+                    }
+                    next = jump(JUMP_IF_FALSE);
+                } else hasWildcard = true;
+                expression(arm.value()); ends.add(jump(JUMP));
+                if (next >= 0) patch(next);
+                if (hasWildcard) break;
+            }
+            if (!hasWildcard) emit(PUSH_NONE);
+            ends.forEach(this::patch);
         }
 
         void call(Call call) {
             String api = qualifiedName(call.callee());
             ApiDefinition definition = api == null ? null : APIS.get(api);
+            if (definition == null && api != null && !api.contains(".") && functionNames.contains(api)) {
+                if (call.arguments().stream().anyMatch(argument -> argument.name() != null))
+                    error("ARC-E2032", "自作関数では名前付き引数を使用できません", call, "位置引数を使用してください");
+                for (CallArg argument : call.arguments()) expression(argument.value());
+                emit(CALL, api, call.arguments().size(), 0);
+                fuel += 4;
+                return;
+            }
             if (definition == null) {
                 error("ARC-E2030", "許可されていないAPI呼び出しです: " + (api == null ? "動的呼び出し" : api), call,
                     "ArcSys StudioのAPI一覧にある関数だけを使用してください");
@@ -162,6 +237,12 @@ public final class ArcCompiler {
         void literal(Object value) {
             if (value == null) emit(PUSH_NONE);
             else if (value instanceof Boolean b) emit(PUSH_BOOL, "", b ? 1 : 0, 0);
+            else if (value instanceof net.monacraft.spellforge.arcsys.language.SourceModel.UnitValue unit) {
+                if (unit.unit() == net.monacraft.spellforge.arcsys.language.SourceModel.Unit.TICKS
+                        || unit.unit() == net.monacraft.spellforge.arcsys.language.SourceModel.Unit.DAYS)
+                    emit(PUSH_LONG, "", unit.ticks(), 0);
+                else emit(PUSH_DOUBLE, unit.unit().name(), 0, unit.value());
+            }
             else if (value instanceof Long l) emit(PUSH_LONG, "", l, 0);
             else if (value instanceof Double d) emit(PUSH_DOUBLE, "", 0, d);
             else emit(PUSH_STRING, String.valueOf(value), 0, 0);
@@ -178,21 +259,54 @@ public final class ArcCompiler {
 
         int jump(Op op) { emit(op, "", -1, 0); return code.size() - 1; }
         void patch(int at) { Instruction old = code.get(at); code.set(at, new Instruction(old.op(), old.text(), code.size(), old.decimal())); }
+        void patchTo(int at, int target) { Instruction old = code.get(at); code.set(at, new Instruction(old.op(), old.text(), target, old.decimal())); }
         void emit(Op op) { emit(op, "", 0, 0); }
         void emit(Op op, String text, long number, double decimal) { code.add(new Instruction(op, text, number, decimal)); fuel++; }
         void error(String code, String message, net.monacraft.spellforge.arcsys.language.ArcAst.Node node, String suggestion) {
             diagnostics.add(new Diagnostic(code, Severity.ERROR, message, node.span(), suggestion));
+        }
+        private static final class LoopContext {
+            final List<Integer> breaks = new ArrayList<>();
+            final List<Integer> continues = new ArrayList<>();
         }
     }
 
     private static Map<String, ApiDefinition> apiDefinitions() {
         Map<String, ApiDefinition> apis = new TreeMap<>();
         apis.put("mobs.hostile", new ApiDefinition("sense.hostile", 0, 2, 8));
+        apis.put("entities.hostile", new ApiDefinition("sense.hostile", 0, 3, 8));
         apis.put("spell.cast", new ApiDefinition("spell.cast", 1, 2, 16));
         apis.put("spell.effect", new ApiDefinition("spell.effect", 2, 4, 12));
         apis.put("world.particle", new ApiDefinition("visual.particle", 2, 4, 8));
+        apis.put("particles.spiral", new ApiDefinition("visual.particle", 1, 4, 10));
+        apis.put("particles.ring", new ApiDefinition("visual.particle", 1, 4, 8));
+        apis.put("particles.sphere", new ApiDefinition("visual.particle", 1, 4, 12));
+        apis.put("display.magic_circle", new ApiDefinition("visual.display", 1, 5, 20));
+        apis.put("display.item", new ApiDefinition("visual.display", 2, 4, 12));
+        apis.put("display.text", new ApiDefinition("visual.display", 2, 4, 12));
+        apis.put("virtual_structure.show", new ApiDefinition("visual.structure", 2, 4, 24));
         apis.put("math.clamp", new ApiDefinition("math", 3, 3, 2));
         apis.put("target.nearest", new ApiDefinition("sense.target", 0, 1, 6));
+        apis.put("combat.can_attack", new ApiDefinition("combat.inspect", 1, 1, 3));
+        apis.put("combat.damage", new ApiDefinition("combat.damage", 2, 3, 16));
+        apis.put("combat.apply", new ApiDefinition("combat.effect", 3, 4, 12));
+        apis.put("entity.distance", new ApiDefinition("sense.distance", 2, 2, 2));
+        apis.put("raycast.entities", new ApiDefinition("sense.raycast", 1, 4, 12));
+        apis.put("raycast.blocks", new ApiDefinition("sense.raycast", 1, 4, 12));
+        apis.put("blocks.query", new ApiDefinition("sense.block", 1, 3, 8));
+        apis.put("items.inspect", new ApiDefinition("sense.item", 1, 1, 4));
+        apis.put("mana.current", new ApiDefinition("mana.read", 0, 0, 1));
+        apis.put("mana.consume", new ApiDefinition("mana.consume", 1, 1, 4));
+        apis.put("pdc.get", new ApiDefinition("storage.read", 1, 2, 3));
+        apis.put("pdc.set", new ApiDefinition("storage.write", 2, 3, 5));
+        apis.put("time.after", new ApiDefinition("time.schedule", 2, 2, 4));
+        apis.put("event.cancel", new ApiDefinition("event.cancel", 0, 0, 2));
+        apis.put("skript.emit", new ApiDefinition("operator.skript.bridge", 1, 2, 8));
+        apis.put("random.chance", new ApiDefinition("random", 1, 1, 2));
+        apis.put("time.wait", new ApiDefinition("time.schedule", 1, 1, 4));
+        apis.put("event.emit", new ApiDefinition("event.emit", 1, 1, 4));
+        apis.put("state.get", new ApiDefinition("state.read", 2, 2, 2));
+        apis.put("state.set", new ApiDefinition("state.write", 2, 2, 3));
         return Collections.unmodifiableMap(apis);
     }
 }

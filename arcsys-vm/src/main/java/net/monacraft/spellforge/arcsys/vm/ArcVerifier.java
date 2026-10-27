@@ -30,6 +30,11 @@ public final class ArcVerifier {
                 if (instruction.number() < 0 || instruction.number() > 32 || instruction.text().indexOf('\u0000') < 1)
                     issues.add(new Issue("ARC-V4006", pc, "invalid host descriptor"));
             }
+            if (instruction.op() == Op.CALL) {
+                Integer target = program.entryPoints().get("fn:" + instruction.text());
+                if (target == null || !validTarget(target, program.instructions().size()) || instruction.number() < 0 || instruction.number() > 16)
+                    issues.add(new Issue("ARC-V4008", pc, "invalid function call"));
+            }
             if (instruction.text().length() > ArcVm.MAX_STRING)
                 issues.add(new Issue("ARC-V4007", pc, "operand string too long"));
         }

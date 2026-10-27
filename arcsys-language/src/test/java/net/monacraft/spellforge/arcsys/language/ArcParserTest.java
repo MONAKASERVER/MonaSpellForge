@@ -41,4 +41,49 @@ class ArcParserTest {
         assertFalse(result.valid());
         assertEquals("ARC-E0001", result.diagnostics().getFirst().code());
     }
+
+    @Test void parsesUnitsStatesEventsAndSkriptSugar() {
+        String source = """
+            module monaka.combat;
+            const RADIUS: Distance = 24b;
+            enum Mode { Beam, Burst }
+            spell "Adaptive" {
+              requires fragments { MOB_SENSOR: 1 }
+              state hits: Int = 0 persist(player, ttl: 7d);
+              on damage(player) {
+                guard mana.current >= 100mp else { return; }
+                chance 35% { emit signal "READY"; }
+                wait 5t;
+                repeat 2 { hits += 1; }
+              }
+            }
+            """;
+        var result = ArcParser.parse(source);
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        assertEquals(2, result.program().spells().getFirst().states().size());
+        assertEquals(Trigger.DAMAGE, result.program().spells().getFirst().handlers().getFirst().trigger());
+    }
+
+    @Test void typeCheckerRejectsMixedDimensions() {
+        var parsed = ArcParser.parse("spell X { on cast { let broken = 5s + 4b; } }");
+        assertTrue(parsed.valid(), () -> parsed.diagnostics().toString());
+        var diagnostics = new ArcTypeChecker().check(parsed.program());
+        assertTrue(diagnostics.stream().anyMatch(d -> d.code().equals("ARC-T5009")));
+    }
+
+    @Test void parsesSkriptStyleCombatAndPeriodicSyntax() {
+        var result = ArcParser.parse("""
+            spell HELLFIRE_COUNTER {
+              on damage(player) {
+                chance 35% {
+                  wait 5t;
+                  cast FIRE at player;
+                  apply BURNING to player for 5s;
+                }
+                every 20t for 5s { emit "PULSE"; }
+              }
+            }
+            """);
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+    }
 }

@@ -14,9 +14,26 @@ const apis: Record<string, { detail: string; mana: number; capability: string }>
   'spell.cast': { detail: '登録済み術式効果を対象へ要求します', mana: 12, capability: 'spell.cast' },
   'spell.effect': { detail: '安全な効果要求を生成します', mana: 8, capability: 'spell.effect' },
   'world.particle': { detail: '構成に応じたパーティクルを要求します', mana: 2, capability: 'visual.particle' },
-  'math.clamp': { detail: '数値を最小値と最大値の範囲へ制限します', mana: 0, capability: 'math' }
+  'math.clamp': { detail: '数値を最小値と最大値の範囲へ制限します', mana: 0, capability: 'math' },
+  'entities.hostile': { detail: '制限付き範囲から敵対Mobを観測します', mana: 4, capability: 'sense.hostile' },
+  'combat.can_attack': { detail: '保護・PvP規則を含め攻撃可能か検査します', mana: 0, capability: 'combat.inspect' },
+  'combat.damage': { detail: 'サーバー権威の魔術ダメージを要求します', mana: 12, capability: 'combat.damage' },
+  'combat.apply': { detail: '許可済み状態異常を要求します', mana: 8, capability: 'combat.effect' },
+  'particles.spiral': { detail: '上限制御された螺旋パーティクル', mana: 2, capability: 'visual.particle' },
+  'particles.ring': { detail: '上限制御された円形パーティクル', mana: 2, capability: 'visual.particle' },
+  'display.magic_circle': { detail: '一時的な魔法陣Displayを要求します', mana: 4, capability: 'visual.display' },
+  'raycast.entities': { detail: '距離・件数制限付きEntity Raycast', mana: 2, capability: 'sense.raycast' },
+  'raycast.blocks': { detail: '距離制限付きBlock Raycast', mana: 2, capability: 'sense.raycast' },
+  'pdc.get': { detail: 'ArcSys専用名前空間を読み取ります', mana: 0, capability: 'storage.read' },
+  'pdc.set': { detail: 'ArcSys専用名前空間へ容量制限付き保存を要求します', mana: 2, capability: 'storage.write' }
 };
-const keywords = ['spell', 'fn', 'on', 'cast', 'pulse', 'hit', 'kill', 'damage_taken', 'let', 'const', 'state', 'if', 'else', 'for', 'in', 'repeat', 'return', 'true', 'false', 'none'];
+const keywords = [
+  'spell', 'module', 'use', 'pub', 'private', 'fn', 'effect', 'struct', 'enum', 'type', 'trait', 'impl',
+  'on', 'cast', 'pulse', 'hit', 'kill', 'damage', 'death', 'enter', 'mana_below', 'spell_end', 'signal', 'projectile_impact',
+  'let', 'mut', 'const', 'state', 'if', 'else', 'match', 'guard', 'defer', 'for', 'in', 'repeat', 'break', 'continue', 'return',
+  'chance', 'wait', 'every', 'loop', 'foreach', 'parallel', 'await', 'after', 'atomic', 'transaction', 'visual', 'combat',
+  'requires', 'fragments', 'permission', 'ensures', 'persist', 'emit', 'true', 'false', 'none'
+];
 
 connection.onInitialize((_params: InitializeParams): InitializeResult => ({ capabilities: {
   textDocumentSync: TextDocumentSyncKind.Incremental,
@@ -50,6 +67,10 @@ function validate(document: TextDocument): void {
   for (const open of stack) diagnostics.push(diag(document, open.offset, open.offset + 1, `'${open.char}' が閉じられていません`, 'ARC-LSP-002'));
   if (inString) diagnostics.push(diag(document, Math.max(0, text.lastIndexOf('"')), text.length, '文字列が閉じられていません', 'ARC-LSP-003'));
   if (Buffer.byteLength(text, 'utf8') > 65_536) diagnostics.push(diag(document, 0, Math.min(text.length, 1), 'ソースが65536バイトを超えています', 'ARC-LSP-004'));
+  for (const match of text.matchAll(/\b(\d+(?:\.\d+)?)(t|s|b|mp|%|d)\b/g)) {
+    const amount = Number(match[1]);
+    if (!Number.isFinite(amount) || amount < 0) diagnostics.push(diag(document, match.index!, match.index! + match[0].length, '単位付き数値が不正です', 'ARC-LSP-UNIT'));
+  }
   for (const match of text.matchAll(/\b(?:java|javax|kotlin|ProcessBuilder|Runtime|ClassLoader|reflect|File|Socket)\b/g)) {
     diagnostics.push(diag(document, match.index!, match.index! + match[0].length, 'ArcSysからOS・JVM APIは使用できません', 'ARC-LSP-SECURITY'));
   }

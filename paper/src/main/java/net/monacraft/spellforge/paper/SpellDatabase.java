@@ -85,6 +85,7 @@ final class SpellDatabase implements AutoCloseable {
                 CREATE TABLE IF NOT EXISTS arc_revisions(
                   spell_uuid TEXT NOT NULL, revision INTEGER NOT NULL, source TEXT NOT NULL,
                   source_hash TEXT NOT NULL, bytecode BLOB NOT NULL, capabilities TEXT NOT NULL,
+                  requirements TEXT NOT NULL DEFAULT '',
                   created_at INTEGER NOT NULL, PRIMARY KEY(spell_uuid, revision),
                   FOREIGN KEY(spell_uuid) REFERENCES arc_spells(spell_uuid) ON DELETE CASCADE
                 )""");
@@ -99,6 +100,7 @@ final class SpellDatabase implements AutoCloseable {
         }
         ensureColumn("fragment_issuance", "consumed_circuit_uuid", "TEXT");
         ensureColumn("fragment_issuance", "consumed_at", "INTEGER");
+        ensureColumn("arc_revisions", "requirements", "TEXT NOT NULL DEFAULT ''");
         try (Statement statement = connection.createStatement()) {
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, unixepoch())");
@@ -599,21 +601,21 @@ final class SpellDatabase implements AutoCloseable {
 
     synchronized Optional<ArcSpellRevision> arcSpell(UUID spellId, UUID ownerId) {
         try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT s.name,s.current_revision,s.enabled,r.source,r.source_hash,r.capabilities,r.created_at
+                SELECT s.name,s.current_revision,s.enabled,r.source,r.source_hash,r.capabilities,r.requirements,r.created_at
                 FROM arc_spells s JOIN arc_revisions r ON r.spell_uuid=s.spell_uuid AND r.revision=s.current_revision
                 WHERE s.spell_uuid=? AND s.owner_uuid=?""")) {
             ps.setString(1, spellId.toString()); ps.setString(2, ownerId.toString());
             try (ResultSet row = ps.executeQuery()) {
                 if (!row.next()) return Optional.empty();
                 return Optional.of(new ArcSpellRevision(spellId, row.getString(1), row.getLong(2), row.getInt(3) != 0,
-                        row.getString(4), row.getString(5), row.getString(6), row.getLong(7)));
+                        row.getString(4), row.getString(5), row.getString(6), row.getString(7), row.getLong(8)));
             }
         } catch (SQLException error) { throw new IllegalStateException("Could not open ArcSys spell", error); }
     }
 
     synchronized ArcSpellRevision deployArcSpell(UUID ownerId, UUID requestedId, long expectedRevision,
                                                   String name, String source, String hash, byte[] bytecode,
-                                                  String capabilities) {
+                                                  String capabilities, String requirements) {
         UUID spellId = requestedId == null ? UUID.randomUUID() : requestedId;
         long now = System.currentTimeMillis();
         try {
@@ -640,13 +642,14 @@ final class SpellDatabase implements AutoCloseable {
                     upsert.setLong(4, revision); upsert.setLong(5, now); upsert.setLong(6, now); upsert.executeUpdate();
                 }
                 try (PreparedStatement insert = connection.prepareStatement(
-                        "INSERT INTO arc_revisions(spell_uuid,revision,source,source_hash,bytecode,capabilities,created_at) VALUES(?,?,?,?,?,?,?)")) {
+                        "INSERT INTO arc_revisions(spell_uuid,revision,source,source_hash,bytecode,capabilities,requirements,created_at) VALUES(?,?,?,?,?,?,?,?)")) {
                     insert.setString(1, spellId.toString()); insert.setLong(2, revision); insert.setString(3, source);
-                    insert.setString(4, hash); insert.setBytes(5, bytecode); insert.setString(6, capabilities); insert.setLong(7, now); insert.executeUpdate();
+                    insert.setString(4, hash); insert.setBytes(5, bytecode); insert.setString(6, capabilities);
+                    insert.setString(7, requirements); insert.setLong(8, now); insert.executeUpdate();
                 }
                 auditArcDeploy(UUID.randomUUID(), spellId, ownerId, expectedRevision, "DEPLOYED", hash, now);
                 connection.commit();
-                return new ArcSpellRevision(spellId, name, revision, false, source, hash, capabilities, now);
+                return new ArcSpellRevision(spellId, name, revision, false, source, hash, capabilities, requirements, now);
             } catch (RuntimeException | SQLException error) {
                 connection.rollback(); throw error;
             } finally { connection.setAutoCommit(true); }
@@ -690,7 +693,7 @@ final class SpellDatabase implements AutoCloseable {
     record StoreFragmentResult(boolean stored, int count, String code) { }
     record ArcSpellSummary(UUID spellId, String name, long revision, boolean enabled, long updatedAt) { }
     record ArcSpellRevision(UUID spellId, String name, long revision, boolean enabled, String source,
-                            String sourceHash, String capabilities, long createdAt) { }
+                            String sourceHash, String capabilities, String requirements, long createdAt) { }
     record ArcDeployAudit(UUID spellId, long requestedRevision, String resultCode, String sourceHash, long createdAt) { }
     static final class OptimisticConflict extends RuntimeException { final long revision; OptimisticConflict(long revision) { this.revision = revision; } }
     static final class FragmentUnavailable extends RuntimeException { final UUID instanceId; FragmentUnavailable(UUID instanceId) { this.instanceId = instanceId; } }

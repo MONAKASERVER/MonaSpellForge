@@ -51,6 +51,7 @@ public final class ArcVm {
         List<Instruction> code = program.instructions();
         Deque<Object> stack = new ArrayDeque<>();
         Map<String, Object> variables = new HashMap<>(inputs == null ? Map.of() : inputs);
+        Deque<CallFrame> calls = new ArrayDeque<>();
         Execution execution = new Execution(limits.maxEffects());
         int pc = start;
         int fuel = limits.fuel();
@@ -80,6 +81,14 @@ public final class ArcVm {
                         push(stack, List.copyOf(values));
                     }
                     case CALL_HOST -> invokeHost(stack, instruction, host, execution);
+                    case CALL -> {
+                        if (calls.size() >= 32) throw new Trap("ARC-R3017", "call depth exhausted");
+                        Integer target = program.entryPoints().get("fn:" + instruction.text());
+                        if (target == null) throw new Trap("ARC-R3018", "function not found");
+                        calls.push(new CallFrame(pc, variables));
+                        variables = new HashMap<>(variables);
+                        pc = target;
+                    }
                     case JUMP -> pc = checkedJump(instruction.number(), code.size());
                     case JUMP_IF_FALSE -> { if (!truthy(pop(stack))) pc = checkedJump(instruction.number(), code.size()); }
                     case ITER_INIT -> {
@@ -91,7 +100,9 @@ public final class ArcVm {
                     case ITER_NEXT -> { Cursor cursor = cursor(pop(stack)); push(stack, safe(cursor.iterator.next())); }
                     case RETURN -> {
                         Object value = stack.isEmpty() ? null : unwrap(pop(stack));
-                        return new Result(Status.COMPLETED, value, limits.fuel() - fuel - 1, execution.effects(), null, null);
+                        if (!calls.isEmpty()) {
+                            CallFrame frame = calls.pop(); variables = frame.variables(); pc = frame.returnPc(); push(stack, safe(value));
+                        } else return new Result(Status.COMPLETED, value, limits.fuel() - fuel - 1, execution.effects(), null, null);
                     }
                     case HALT -> { return new Result(Status.COMPLETED, null, limits.fuel() - fuel - 1, execution.effects(), null, null); }
                 }
@@ -151,6 +162,7 @@ public final class ArcVm {
     private static int checkedJump(long target, int size) { if (target < 0 || target >= size) throw new Trap("ARC-R3015", "invalid jump"); return Math.toIntExact(target); }
     private static Cursor cursor(Object value) { if (value instanceof Cursor c) return c; throw new Trap("ARC-R3016", "iterator required"); }
     private record Cursor(Iterator<?> iterator) { }
+    private record CallFrame(int returnPc, Map<String, Object> variables) { }
     private enum None { VALUE }
     private static final class Trap extends RuntimeException {
         private final String code;

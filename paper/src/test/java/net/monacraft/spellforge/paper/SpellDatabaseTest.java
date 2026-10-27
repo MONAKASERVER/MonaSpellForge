@@ -116,13 +116,13 @@ class SpellDatabaseTest {
         UUID owner = UUID.randomUUID();
         try (SpellDatabase database = new SpellDatabase(temp.resolve("arc.sqlite"))) {
             byte[] firstCode = {1, 2, 3};
-            var first = database.deployArcSpell(owner, null, 0, "Example", "spell Example {}", "hash-1", firstCode, "math");
+            var first = database.deployArcSpell(owner, null, 0, "Example", "spell Example {}", "hash-1", firstCode, "math", "");
             assertEquals(1, first.revision());
             assertEquals("spell Example {}", database.arcSpell(first.spellId(), owner).orElseThrow().source());
-            var second = database.deployArcSpell(owner, first.spellId(), 1, "Example", "spell Example { on cast {} }", "hash-2", new byte[]{4}, "math");
+            var second = database.deployArcSpell(owner, first.spellId(), 1, "Example", "spell Example { on cast {} }", "hash-2", new byte[]{4}, "math", "");
             assertEquals(2, second.revision());
             assertThrows(SpellDatabase.OptimisticConflict.class, () -> database.deployArcSpell(owner, first.spellId(), 1,
-                    "Example", "stale", "hash-stale", new byte[]{5}, "math"));
+                    "Example", "stale", "hash-stale", new byte[]{5}, "math", ""));
             assertEquals(2, database.arcSpell(first.spellId(), owner).orElseThrow().revision());
             assertEquals(2, database.arcSpells(owner).getFirst().revision());
         }
