@@ -8,7 +8,7 @@ import java.util.*;
 
 /** Local static type inference with dimension-aware Minecraft unit types. */
 public final class ArcTypeChecker {
-    public enum Kind { ANY, NONE, BOOL, INT, FLOAT, STRING, DURATION, DISTANCE, MANA, PERCENT, LIST, ENTITY, RESULT }
+    public enum Kind { ANY, NONE, BOOL, INT, FLOAT, STRING, DURATION, DISTANCE, MANA, PERCENT, LIST, ENTITY, OPTION, RESULT }
     public record ArcType(Kind kind, ArcType element) {
         public static ArcType of(Kind kind) { return new ArcType(kind, null); }
         public static ArcType list(ArcType element) { return new ArcType(Kind.LIST, element); }
@@ -98,22 +98,52 @@ public final class ArcTypeChecker {
             case Member m -> member(m);
             case Call c -> call(c);
             case MatchExpr m -> match(m);
+            case VariantExpr v -> variant(v);
+            case TryExpr t -> tryExpression(t);
+            case BlockExpr b -> { block(b.body()); yield ArcType.of(Kind.NONE); }
         };
+    }
+
+    private ArcType variant(VariantExpr variant) {
+        ArcType value = variant.value() == null ? ANY : infer(variant.value());
+        return switch (variant.tag()) {
+            case "None", "Some" -> new ArcType(Kind.OPTION, value);
+            case "Ok", "Err" -> new ArcType(Kind.RESULT, value);
+            default -> ANY;
+        };
+    }
+
+    private ArcType tryExpression(TryExpr expression) {
+        ArcType value = infer(expression.value());
+        if (value.kind() != Kind.RESULT && value.kind() != Kind.ANY)
+            error("ARC-T5015", "? 演算子はResultにだけ使用できます", expression);
+        return value.element() == null ? ANY : value.element();
     }
 
     private ArcType match(MatchExpr match) {
         ArcType subject = infer(match.subject());
         ArcType result = null;
         boolean wildcard = false;
+        Set<String> variants = new HashSet<>();
         for (MatchArm arm : match.arms()) {
             wildcard |= arm.pattern() instanceof WildcardPattern;
+            if (arm.pattern() instanceof VariantPattern variant) variants.add(variant.tag());
             if (arm.pattern() instanceof LiteralPattern literal && !compatible(subject, literal(literal.value())))
                 error("ARC-T5012", "match対象とパターンの型が一致しません", match);
+            if (arm.pattern() instanceof VariantPattern variant && subject.kind() != Kind.RESULT
+                    && subject.kind() != Kind.OPTION && subject.kind() != Kind.ANY)
+                error("ARC-T5016", "バリアントパターンはOptionまたはResultに必要です", match);
+            scopes.push(new HashMap<>());
+            if (arm.pattern() instanceof VariantPattern variant && variant.binding() != null)
+                define(variant.binding(), subject.element() == null ? ANY : subject.element());
             ArcType armType = infer(arm.value());
+            scopes.pop();
             if (result == null) result = armType;
             else if (!compatible(result, armType)) error("ARC-T5013", "match各アームの結果型が一致しません", arm.value());
         }
-        if (!wildcard) diagnostics.add(new Diagnostic("ARC-TW5014", Severity.WARNING, "matchが全ケースを処理する保証がありません", match.span(), "最後に _ => ... を追加してください"));
+        boolean exhaustive = subject.kind() == Kind.RESULT && variants.containsAll(Set.of("Ok", "Err"))
+                || subject.kind() == Kind.OPTION && variants.containsAll(Set.of("Some", "None"));
+        if (!wildcard && !exhaustive) diagnostics.add(new Diagnostic("ARC-TW5014", Severity.WARNING, "matchが全ケースを処理する保証がありません", match.span(), "最後に _ => ... を追加してください"));
         return result == null ? ANY : result;
     }
 
@@ -148,6 +178,8 @@ public final class ArcTypeChecker {
         call.arguments().forEach(arg -> infer(arg.value()));
         String name = qualified(call.callee());
         if (name == null) return ANY;
+        if (name.equals("Some")) return new ArcType(Kind.OPTION, call.arguments().isEmpty() ? ANY : infer(call.arguments().getFirst().value()));
+        if (name.equals("Ok") || name.equals("Err")) return new ArcType(Kind.RESULT, call.arguments().isEmpty() ? ANY : infer(call.arguments().getFirst().value()));
         return switch (name) {
             case "mobs.hostile" -> ArcType.list(ArcType.of(Kind.ENTITY));
             case "target.nearest" -> ArcType.of(Kind.ENTITY);

@@ -49,6 +49,7 @@ public final class ArcCompiler {
         private int synthetic;
         private int fuel;
         private Set<String> stateNames = Set.of();
+        private Map<String, Persistence> statePersistence = Map.of();
         private Set<String> functionNames = Set.of();
         private final Deque<LoopContext> loops = new ArrayDeque<>();
         private final List<List<Block>> deferredScopes = new ArrayList<>();
@@ -59,6 +60,8 @@ public final class ArcCompiler {
         ArcBytecode.Program compile(SpellDecl spell) {
             stateNames = spell.states().stream().filter(value -> value.binding() == Binding.STATE).map(VarDecl::name)
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            statePersistence = spell.states().stream().filter(value -> value.binding() == Binding.STATE && value.persistence() != null)
+                    .collect(java.util.stream.Collectors.toUnmodifiableMap(VarDecl::name, VarDecl::persistence));
             functionNames = spell.functions().stream().map(FunctionDecl::name).collect(java.util.stream.Collectors.toUnmodifiableSet());
             for (HandlerDecl handler : spell.handlers()) {
                 String entry = "on:" + handler.trigger().name().toLowerCase(Locale.ROOT);
@@ -71,7 +74,10 @@ public final class ArcCompiler {
                     expression(state.initializer());
                     if (state.binding() == Binding.STATE) {
                         emit(PUSH_STRING, state.name(), 0, 0);
-                        emit(CALL_HOST, "state.get\u0000default,name", 2, 0);
+                        Persistence persistence = statePersistence.get(state.name());
+                        emit(PUSH_STRING, persistence == null ? "SESSION" : persistence.scope().name(), 0, 0);
+                        emit(PUSH_LONG, "", persistence == null ? 0 : persistence.ttlTicks(), 0);
+                        emit(CALL_HOST, "state.get\u0000default,name,scope,ttl", 4, 0);
                         capabilities.add("state.read");
                     }
                     emit(STORE, state.name(), 0, 0);
@@ -199,7 +205,10 @@ public final class ArcCompiler {
                         expression(a.value()); emit(DUP); emit(STORE, v.name(), 0, 0);
                         if (stateNames.contains(v.name())) {
                             emit(DUP); emit(PUSH_STRING, v.name(), 0, 0);
-                            emit(CALL_HOST, "state.set\u0000value,name", 2, 0); emit(POP);
+                            Persistence persistence = statePersistence.get(v.name());
+                            emit(PUSH_STRING, persistence == null ? "SESSION" : persistence.scope().name(), 0, 0);
+                            emit(PUSH_LONG, "", persistence == null ? 0 : persistence.ttlTicks(), 0);
+                            emit(CALL_HOST, "state.set\u0000value,name,scope,ttl", 4, 0); emit(POP);
                             capabilities.add("state.write");
                         }
                     }
@@ -208,7 +217,25 @@ public final class ArcCompiler {
                 case Member m -> { expression(m.receiver()); emit(GET_MEMBER, m.name(), 0, 0); }
                 case Call c -> call(c);
                 case MatchExpr m -> matchExpression(m);
+                case VariantExpr v -> {
+                    if (v.value() != null) expression(v.value());
+                    emit(MAKE_VARIANT, v.tag(), v.value() == null ? 0 : 1, 0);
+                }
+                case TryExpr t -> tryExpression(t);
+                case BlockExpr b -> { block(b.body()); emit(PUSH_NONE); }
             }
+        }
+
+        void tryExpression(TryExpr expression) {
+            expression(expression.value());
+            emit(DUP); emit(IS_VARIANT, "Err", 0, 0);
+            int success = jump(JUMP_IF_FALSE);
+            String error = "$error" + synthetic++;
+            emit(STORE, error, 0, 0);
+            emitAllDeferred();
+            emit(LOAD, error, 0, 0); emit(RETURN);
+            patch(success);
+            emit(UNWRAP_VARIANT, "Ok", 0, 0);
         }
 
         void matchExpression(MatchExpr match) {
@@ -222,12 +249,17 @@ public final class ArcCompiler {
                     emit(LOAD, subject, 0, 0);
                     if (arm.pattern() instanceof LiteralPattern literal) { literal(literal.value()); emit(EQ); }
                     else if (arm.pattern() instanceof EnumPattern enumeration) { emit(PUSH_STRING, enumeration.name(), 0, 0); emit(EQ); }
+                    else if (arm.pattern() instanceof VariantPattern variant) { emit(IS_VARIANT, variant.tag(), 0, 0); }
                     else if (arm.pattern() instanceof RangePattern range) {
                         emit(DUP); literal(range.start()); emit(GE);
                         emit(LOAD, subject, 0, 0); literal(range.end()); emit(range.inclusive() ? LE : LT); emit(AND);
                     }
                     next = jump(JUMP_IF_FALSE);
                 } else hasWildcard = true;
+                if (arm.pattern() instanceof VariantPattern variant && variant.binding() != null) {
+                    emit(LOAD, subject, 0, 0); emit(UNWRAP_VARIANT, variant.tag(), 0, 0);
+                    emit(STORE, variant.binding(), 0, 0);
+                }
                 expression(arm.value()); ends.add(jump(JUMP));
                 if (next >= 0) patch(next);
                 if (hasWildcard) break;
@@ -238,6 +270,16 @@ public final class ArcCompiler {
 
         void call(Call call) {
             String api = qualifiedName(call.callee());
+            if (api != null && Set.of("Some", "Ok", "Err").contains(api)) {
+                if (call.arguments().size() != 1 || call.arguments().getFirst().name() != null) {
+                    error("ARC-E2033", api + " は位置引数を1つ必要とします", call, api + "(value) の形で使用してください");
+                    emit(PUSH_NONE);
+                    return;
+                }
+                expression(call.arguments().getFirst().value());
+                emit(MAKE_VARIANT, api, 1, 0);
+                return;
+            }
             ApiDefinition definition = api == null ? null : APIS.get(api);
             if (definition == null && api != null && !api.contains(".") && functionNames.contains(api)) {
                 if (call.arguments().stream().anyMatch(argument -> argument.name() != null))
@@ -257,6 +299,13 @@ public final class ArcCompiler {
             if (count < definition.minArgs() || count > definition.maxArgs()) {
                 error("ARC-E2031", api + " の引数数が不正です", call, definition.minArgs() + "〜" + definition.maxArgs() + "個にしてください");
             }
+            if (api.equals("time.wait")) {
+                expression(call.arguments().getFirst().value());
+                emit(SUSPEND);
+                capabilities.add(definition.capability());
+                fuel += definition.fuel();
+                return;
+            }
             StringBuilder names = new StringBuilder(api).append('\u0000');
             for (CallArg argument : call.arguments()) {
                 expression(argument.value());
@@ -264,6 +313,7 @@ public final class ArcCompiler {
                 names.append(argument.name() == null ? "" : argument.name());
             }
             emit(CALL_HOST, names.toString(), count, 0);
+            if (RESULT_APIS.contains(api)) emit(COERCE_RESULT);
             capabilities.add(definition.capability());
             fuel += definition.fuel();
         }
@@ -347,8 +397,13 @@ public final class ArcCompiler {
         apis.put("random.chance", new ApiDefinition("random", 1, 1, 2));
         apis.put("time.wait", new ApiDefinition("time.schedule", 1, 1, 4));
         apis.put("event.emit", new ApiDefinition("event.emit", 1, 1, 4));
-        apis.put("state.get", new ApiDefinition("state.read", 2, 2, 2));
-        apis.put("state.set", new ApiDefinition("state.write", 2, 2, 3));
+        apis.put("state.get", new ApiDefinition("state.read", 2, 4, 2));
+        apis.put("state.set", new ApiDefinition("state.write", 2, 4, 3));
         return Collections.unmodifiableMap(apis);
     }
+
+    private static final Set<String> RESULT_APIS = Set.of(
+            "spell.cast", "spell.effect", "combat.damage", "combat.apply", "mana.consume",
+            "pdc.set", "time.after", "event.cancel", "skript.emit", "time.wait", "event.emit", "state.set"
+    );
 }

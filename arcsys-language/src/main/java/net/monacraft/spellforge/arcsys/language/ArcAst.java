@@ -48,8 +48,16 @@ public final class ArcAst {
     }
 
     public enum Binding { LET, CONST, STATE }
+    public enum PersistenceScope { PLAYER, SPELL, SESSION }
+    public record Persistence(PersistenceScope scope, long ttlTicks) {
+        public Persistence {
+            if (scope == null || ttlTicks < 0) throw new IllegalArgumentException("persistence");
+        }
+    }
 
-    public record VarDecl(Binding binding, String name, Expr initializer, Span span) implements Stmt { }
+    public record VarDecl(Binding binding, String name, Expr initializer, Persistence persistence, Span span) implements Stmt {
+        public VarDecl(Binding binding, String name, Expr initializer, Span span) { this(binding, name, initializer, null, span); }
+    }
     public record IfStmt(Expr condition, Block thenBranch, Block elseBranch, Span span) implements Stmt { }
     public record ForStmt(String variable, Expr iterable, Block body, Span span) implements Stmt { }
     public record RepeatStmt(Expr count, Block body, Span span) implements Stmt { }
@@ -60,7 +68,7 @@ public final class ArcAst {
     public record ExprStmt(Expr expression, Span span) implements Stmt { }
 
     public sealed interface Expr extends Node permits Literal, Variable, Unary, Binary,
-        Assignment, Member, Call, ListExpr, MatchExpr { }
+        Assignment, Member, Call, ListExpr, MatchExpr, VariantExpr, TryExpr, BlockExpr { }
 
     public record Literal(Object value, Span span) implements Expr { }
     public record Variable(String name, Span span) implements Expr { }
@@ -75,12 +83,16 @@ public final class ArcAst {
     public record ListExpr(List<Expr> values, Span span) implements Expr {
         public ListExpr { values = List.copyOf(values); }
     }
+    public record VariantExpr(String tag, Expr value, Span span) implements Expr { }
+    public record TryExpr(Expr value, Span span) implements Expr { }
+    public record BlockExpr(Block body, Span span) implements Expr { }
 
-    public sealed interface Pattern permits WildcardPattern, LiteralPattern, RangePattern, EnumPattern { Span span(); }
+    public sealed interface Pattern permits WildcardPattern, LiteralPattern, RangePattern, EnumPattern, VariantPattern { Span span(); }
     public record WildcardPattern(Span span) implements Pattern { }
     public record LiteralPattern(Object value, Span span) implements Pattern { }
     public record RangePattern(Object start, Object end, boolean inclusive, Span span) implements Pattern { }
     public record EnumPattern(String name, Span span) implements Pattern { }
+    public record VariantPattern(String tag, String binding, Span span) implements Pattern { }
     public record MatchArm(Pattern pattern, Expr value, Span span) { }
     public record MatchExpr(Expr subject, List<MatchArm> arms, Span span) implements Expr {
         public MatchExpr { arms = List.copyOf(arms); }

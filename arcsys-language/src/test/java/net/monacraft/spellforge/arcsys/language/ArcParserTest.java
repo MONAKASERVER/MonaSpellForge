@@ -21,6 +21,38 @@ class ArcParserTest {
         var statement = result.program().spells().getFirst().handlers().getFirst().body().statements().getFirst();
         assertInstanceOf(ArcAst.DeferStmt.class, statement);
     }
+
+    @Test
+    void parsesResultPatternsBlockArmsAndTryOperator() {
+        String source = """
+            spell ResultSpell {
+              on cast {
+                let result = spell.cast("TEST", 1);
+                match result {
+                  Ok(hit) => { return hit; },
+                  Err(error) => { return error; }
+                }
+              }
+              fn unwrap() { return Ok(3)?; }
+            }
+            """;
+        var result = ArcParser.parse(source);
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        var match = assertInstanceOf(ArcAst.MatchExpr.class,
+                assertInstanceOf(ArcAst.ExprStmt.class, result.program().spells().getFirst().handlers().getFirst().body().statements().get(1)).expression());
+        assertInstanceOf(ArcAst.VariantPattern.class, match.arms().getFirst().pattern());
+        assertInstanceOf(ArcAst.BlockExpr.class, match.arms().getFirst().value());
+    }
+
+    @Test
+    void parsesTypedPersistentStatePolicy() {
+        var result = ArcParser.parse("spell X { state hits: Int = 0 persist(player, ttl: 7d); on cast {} }");
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        var persistence = result.program().spells().getFirst().states().getFirst().persistence();
+        assertEquals(ArcAst.PersistenceScope.PLAYER, persistence.scope());
+        assertEquals(7L * 24 * 60 * 60 * 20, persistence.ttlTicks());
+        assertFalse(ArcParser.parse("spell X { on cast { let x = 1 persist(player); } }").valid());
+    }
     private static final String SAMPLE = """
         spell ApocalypseEngine {
           on pulse(20t) {

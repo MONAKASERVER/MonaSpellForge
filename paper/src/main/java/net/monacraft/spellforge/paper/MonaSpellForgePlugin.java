@@ -66,6 +66,7 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
             MsfCommand commands=new MsfCommand(this,fragments,circuits,spells,editor,bridge,webEditor,upgrades,stones,swords,database);
             getCommand("msf").setExecutor(commands);getCommand("msf").setTabCompleter(commands);
             Bukkit.getScheduler().runTaskTimer(this,()->editor.cleanup(getConfig().getLong("editor.session-timeout-seconds",900)*1000L),1200L,1200L);
+            Bukkit.getScheduler().runTaskTimer(this,()->database.cleanupExpiredArcState(System.currentTimeMillis(),1000),1200L,1200L);
             getLogger().info("MonaSpellForge enabled: 72 fragments, protocol v1, database ready");
         } catch (Exception error) {
             getLogger().severe("MonaSpellForge could not start: "+error.getMessage());error.printStackTrace();Bukkit.getPluginManager().disablePlugin(this);

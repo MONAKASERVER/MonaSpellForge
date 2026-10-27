@@ -56,8 +56,77 @@ class ArcVmTest {
         assertEquals(8.0, result.value());
     }
 
+    @Test void matchesOptionAndResultVariantsWithBindings() {
+        var resultProgram = new ArcCompiler().compile("""
+            spell X { on cast {
+              let result = Ok(7);
+              return match result { Ok(value) => value, Err(error) => 0 };
+            } }
+            """);
+        assertTrue(resultProgram.valid(), () -> resultProgram.diagnostics().toString());
+        var result = new ArcVm().run(resultProgram.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), new NoopHost());
+        assertEquals(7L, result.value());
+
+        var optionProgram = new ArcCompiler().compile("""
+            spell X { on cast {
+              let value = Some(3);
+              return match value { Some(found) => found, None => 0 };
+            } }
+            """);
+        assertTrue(optionProgram.valid(), () -> optionProgram.diagnostics().toString());
+        var option = new ArcVm().run(optionProgram.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), new NoopHost());
+        assertEquals(3L, option.value());
+    }
+
+    @Test void questionOperatorUnwrapsOkAndPropagatesErr() {
+        String source = "spell X { on cast { let value = spell.cast(\"TEST\", 1)?; return value; } }";
+        var compiled = new ArcCompiler().compile(source);
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        ArcVm.Host success = new VariantHost(ArcBytecode.Variant.of("Ok", 12L));
+        var ok = new ArcVm().run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), success);
+        assertEquals(12L, ok.value());
+        ArcVm.Host failure = new VariantHost(ArcBytecode.Variant.of("Err", "NO_MANA"));
+        var err = new ArcVm().run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), failure);
+        assertInstanceOf(ArcBytecode.Variant.class, err.value());
+        assertEquals("Err", ((ArcBytecode.Variant) err.value()).tag());
+        assertEquals("NO_MANA", ((ArcBytecode.Variant) err.value()).value());
+    }
+
+    @Test void suspendsAndResumesWaitWithoutResettingState() {
+        var compiled = new ArcCompiler().compile("spell X { on cast { let value = 4; wait 5t; return value + 2; } }");
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        ArcVm vm = new ArcVm();
+        var suspended = vm.run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), new NoopHost());
+        assertEquals(ArcVm.Status.SUSPENDED, suspended.status());
+        assertTrue(suspended.resumable());
+        assertEquals(5L, suspended.resumeAfterTicks());
+        var completed = vm.resume(compiled.program(), suspended.continuation(), new ArcVm.Limits(100, 0), new NoopHost());
+        assertEquals(ArcVm.Status.COMPLETED, completed.status());
+        assertEquals(6.0, completed.value());
+        assertTrue(completed.fuelUsed() > suspended.fuelUsed());
+    }
+
+    @Test void waitCannotRefillFuelAcrossResumes() {
+        var compiled = new ArcCompiler().compile("spell X { on cast { repeat 100 { wait 1t; } } }");
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        ArcVm vm = new ArcVm();
+        var result = vm.run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(40, 0), new NoopHost());
+        int resumes = 0;
+        while (result.status() == ArcVm.Status.SUSPENDED && resumes++ < 100) {
+            result = vm.resume(compiled.program(), result.continuation(), new ArcVm.Limits(40, 0), new NoopHost());
+        }
+        assertEquals(ArcVm.Status.TRAPPED, result.status());
+        assertEquals("ARC-R3002", result.code());
+        assertTrue(resumes < 100);
+    }
+
     private static final class NoopHost implements ArcVm.Host {
         public Object invoke(String api, List<Object> arguments, List<String> argumentNames, ArcVm.Execution execution) { return 1L; }
+        public Object member(Object receiver, String name) { return null; }
+    }
+
+    private record VariantHost(Object value) implements ArcVm.Host {
+        public Object invoke(String api, List<Object> arguments, List<String> argumentNames, ArcVm.Execution execution) { return value; }
         public Object member(Object receiver, String name) { return null; }
     }
 }

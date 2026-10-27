@@ -9,6 +9,8 @@ public final class ArcVm {
     public static final int MAX_STACK = 256;
     public static final int MAX_LIST = 256;
     public static final int MAX_STRING = 2_048;
+    public static final int MAX_SUSPENSIONS = 256;
+    public static final long MAX_WAIT_TICKS = 1_728_000L;
 
     public record Limits(int fuel, int maxEffects) {
         public Limits {
@@ -30,7 +32,12 @@ public final class ArcVm {
     public static final class Execution {
         private final int maxEffects;
         private final List<EffectRequest> effects = new ArrayList<>();
-        private Execution(int maxEffects) { this.maxEffects = maxEffects; }
+        private Execution(int maxEffects) { this(maxEffects, List.of()); }
+        private Execution(int maxEffects, List<EffectRequest> existing) {
+            this.maxEffects = maxEffects;
+            if (existing.size() > maxEffects) throw new Trap("ARC-R3024", "effect budget changed while suspended");
+            effects.addAll(existing);
+        }
         public void request(EffectRequest effect) {
             if (effects.size() >= maxEffects) throw new Trap("ARC-R3008", "effect budget exhausted");
             effects.add(Objects.requireNonNull(effect));
@@ -38,23 +45,70 @@ public final class ArcVm {
         public List<EffectRequest> effects() { return List.copyOf(effects); }
     }
 
-    public record Result(Status status, Object value, int fuelUsed, List<EffectRequest> effects, String code, String message) { }
-    public enum Status { COMPLETED, TRAPPED }
+    public record Result(Status status, Object value, int fuelUsed, List<EffectRequest> effects,
+                         String code, String message, Continuation continuation, long resumeAfterTicks) {
+        public boolean resumable() { return status == Status.SUSPENDED && continuation != null; }
+    }
+    public enum Status { COMPLETED, SUSPENDED, TRAPPED }
+
+    /** Opaque, in-memory ArcVM state. It cannot be constructed or modified by scripts. */
+    public static final class Continuation {
+        private final String programHash;
+        private final int pc;
+        private final List<Object> stack;
+        private final Map<String, Object> variables;
+        private final List<CallFrame> calls;
+        private final List<EffectRequest> effects;
+        private final int fuelRemaining;
+        private final int initialFuel;
+        private final int suspensionCount;
+
+        private Continuation(Program program, int pc, Deque<Object> stack, Map<String, Object> variables,
+                             Deque<CallFrame> calls, List<EffectRequest> effects, int fuelRemaining,
+                             int initialFuel, int suspensionCount) {
+            this.programHash = program.sha256(); this.pc = pc; this.stack = List.copyOf(stack);
+            this.variables = Map.copyOf(variables);
+            this.calls = calls.stream().map(frame -> new CallFrame(frame.returnPc(), Map.copyOf(frame.variables()))).toList();
+            this.effects = List.copyOf(effects); this.fuelRemaining = fuelRemaining;
+            this.initialFuel = initialFuel; this.suspensionCount = suspensionCount;
+        }
+
+        public int suspensionCount() { return suspensionCount; }
+    }
 
     public Result run(Program program, String entry, Map<String, Object> inputs, Limits limits, Host host) {
         Objects.requireNonNull(program); Objects.requireNonNull(entry); Objects.requireNonNull(host);
         Integer start = program.entryPoints().get(entry);
-        if (start == null) return new Result(Status.TRAPPED, null, 0, List.of(), "ARC-R3001", "entry not found");
+        if (start == null) return trapped(0, List.of(), "ARC-R3001", "entry not found");
         List<ArcVerifier.Issue> verification = new ArcVerifier().verify(program);
         if (!verification.isEmpty())
-            return new Result(Status.TRAPPED, null, 0, List.of(), verification.getFirst().code(), verification.getFirst().message());
+            return trapped(0, List.of(), verification.getFirst().code(), verification.getFirst().message());
+        return execute(program, host, limits, start, new ArrayDeque<>(),
+                new HashMap<>(inputs == null ? Map.of() : inputs), new ArrayDeque<>(),
+                new Execution(limits.maxEffects()), limits.fuel(), limits.fuel(), 0);
+    }
+
+    public Result resume(Program program, Continuation continuation, Limits limits, Host host) {
+        Objects.requireNonNull(program); Objects.requireNonNull(continuation); Objects.requireNonNull(limits); Objects.requireNonNull(host);
+        if (!program.sha256().equals(continuation.programHash))
+            return trapped(continuation.initialFuel - continuation.fuelRemaining, continuation.effects,
+                    "ARC-R3022", "program changed while suspended");
+        List<ArcVerifier.Issue> verification = new ArcVerifier().verify(program);
+        if (!verification.isEmpty()) return trapped(continuation.initialFuel - continuation.fuelRemaining,
+                continuation.effects, verification.getFirst().code(), verification.getFirst().message());
+        return execute(program, host, limits, continuation.pc, new ArrayDeque<>(continuation.stack),
+                new HashMap<>(continuation.variables), new ArrayDeque<>(continuation.calls),
+                new Execution(limits.maxEffects(), continuation.effects), continuation.fuelRemaining,
+                continuation.initialFuel, continuation.suspensionCount);
+    }
+
+    private Result execute(Program program, Host host, Limits limits, int start, Deque<Object> stack,
+                           Map<String, Object> initialVariables, Deque<CallFrame> calls, Execution execution,
+                           int startingFuel, int initialFuel, int suspensionCount) {
         List<Instruction> code = program.instructions();
-        Deque<Object> stack = new ArrayDeque<>();
-        Map<String, Object> variables = new HashMap<>(inputs == null ? Map.of() : inputs);
-        Deque<CallFrame> calls = new ArrayDeque<>();
-        Execution execution = new Execution(limits.maxEffects());
+        Map<String, Object> variables = initialVariables;
         int pc = start;
-        int fuel = limits.fuel();
+        int fuel = startingFuel;
         try {
             while (pc >= 0 && pc < code.size()) {
                 if (fuel-- <= 0) throw new Trap("ARC-R3002", "fuel exhausted");
@@ -72,13 +126,46 @@ public final class ArcVm {
                     case ADD, SUB, MUL, DIV, MOD, EQ, NE, LT, LE, GT, GE, AND, OR -> binary(stack, instruction.op());
                     case NEGATE -> push(stack, -number(pop(stack)).doubleValue());
                     case NOT -> push(stack, !truthy(pop(stack)));
-                    case GET_MEMBER -> push(stack, safe(host.member(unwrap(pop(stack)), instruction.text())));
+                    case GET_MEMBER -> {
+                        Object receiver = unwrap(pop(stack));
+                        if (receiver instanceof Variant variant) {
+                            Object value = switch (instruction.text()) {
+                                case "tag" -> variant.tag();
+                                case "value" -> variant.hasValue() ? variant.value() : null;
+                                case "is_ok" -> variant.tag().equals("Ok");
+                                case "is_err" -> variant.tag().equals("Err");
+                                case "is_some" -> variant.tag().equals("Some");
+                                case "is_none" -> variant.tag().equals("None");
+                                default -> throw new Trap("ARC-R3020", "unknown variant member");
+                            };
+                            push(stack, safe(value));
+                        } else push(stack, safe(host.member(receiver, instruction.text())));
+                    }
                     case MAKE_LIST -> {
                         int count = Math.toIntExact(instruction.number());
                         if (count < 0 || count > MAX_LIST || count > stack.size()) throw new Trap("ARC-R3003", "invalid list size");
                         List<Object> values = new ArrayList<>(count);
                         for (int i = 0; i < count; i++) values.add(0, unwrap(pop(stack)));
                         push(stack, List.copyOf(values));
+                    }
+                    case MAKE_VARIANT -> {
+                        if (instruction.number() == 0) push(stack, Variant.empty(instruction.text()));
+                        else if (instruction.number() == 1) push(stack, Variant.of(instruction.text(), unwrap(pop(stack))));
+                        else throw new Trap("ARC-R3019", "invalid variant arity");
+                    }
+                    case IS_VARIANT -> {
+                        Object value = unwrap(pop(stack));
+                        push(stack, value instanceof Variant variant && variant.tag().equals(instruction.text()));
+                    }
+                    case UNWRAP_VARIANT -> {
+                        Object value = unwrap(pop(stack));
+                        if (!(value instanceof Variant variant) || !variant.tag().equals(instruction.text()) || !variant.hasValue())
+                            throw new Trap("ARC-R3021", "variant does not contain the requested value");
+                        push(stack, safe(variant.value()));
+                    }
+                    case COERCE_RESULT -> {
+                        Object value = unwrap(pop(stack));
+                        push(stack, value instanceof Variant ? value : Variant.of("Ok", value));
                     }
                     case CALL_HOST -> invokeHost(stack, instruction, host, execution);
                     case CALL -> {
@@ -88,6 +175,16 @@ public final class ArcVm {
                         calls.push(new CallFrame(pc, variables));
                         variables = new HashMap<>(variables);
                         pc = target;
+                    }
+                    case SUSPEND -> {
+                        long ticks = durationTicks(pop(stack));
+                        if (ticks < 1 || ticks > MAX_WAIT_TICKS) throw new Trap("ARC-R3023", "wait duration out of bounds");
+                        if (suspensionCount >= MAX_SUSPENSIONS) throw new Trap("ARC-R3025", "suspension budget exhausted");
+                        push(stack, Variant.of("Ok", null));
+                        Continuation continuation = new Continuation(program, pc, stack, variables, calls,
+                                execution.effects(), fuel, initialFuel, suspensionCount + 1);
+                        return new Result(Status.SUSPENDED, null, initialFuel - fuel, execution.effects(),
+                                null, null, continuation, ticks);
                     }
                     case JUMP -> pc = checkedJump(instruction.number(), code.size());
                     case JUMP_IF_FALSE -> { if (!truthy(pop(stack))) pc = checkedJump(instruction.number(), code.size()); }
@@ -102,17 +199,24 @@ public final class ArcVm {
                         Object value = stack.isEmpty() ? null : unwrap(pop(stack));
                         if (!calls.isEmpty()) {
                             CallFrame frame = calls.pop(); variables = frame.variables(); pc = frame.returnPc(); push(stack, safe(value));
-                        } else return new Result(Status.COMPLETED, value, limits.fuel() - fuel - 1, execution.effects(), null, null);
+                        } else return completed(value, initialFuel - fuel, execution.effects());
                     }
-                    case HALT -> { return new Result(Status.COMPLETED, null, limits.fuel() - fuel - 1, execution.effects(), null, null); }
+                    case HALT -> { return completed(null, initialFuel - fuel, execution.effects()); }
                 }
             }
             throw new Trap("ARC-R3005", "program counter escaped code");
         } catch (Trap trap) {
-            return new Result(Status.TRAPPED, null, limits.fuel() - Math.max(fuel, 0), execution.effects(), trap.code, trap.getMessage());
+            return trapped(initialFuel - Math.max(fuel, 0), execution.effects(), trap.code, trap.getMessage());
         } catch (RuntimeException failure) {
-            return new Result(Status.TRAPPED, null, limits.fuel() - Math.max(fuel, 0), execution.effects(), "ARC-R3099", "safe runtime trap");
+            return trapped(initialFuel - Math.max(fuel, 0), execution.effects(), "ARC-R3099", "safe runtime trap");
         }
+    }
+
+    private static Result completed(Object value, int fuelUsed, List<EffectRequest> effects) {
+        return new Result(Status.COMPLETED, value, fuelUsed, effects, null, null, null, 0);
+    }
+    private static Result trapped(int fuelUsed, List<EffectRequest> effects, String code, String message) {
+        return new Result(Status.TRAPPED, null, fuelUsed, effects, code, message, null, 0);
     }
 
     private static void invokeHost(Deque<Object> stack, Instruction instruction, Host host, Execution execution) {
@@ -153,6 +257,13 @@ public final class ArcVm {
     }
 
     private static Number number(Object value) { if (value instanceof Number n) return n; throw new Trap("ARC-R3011", "number required"); }
+    private static long durationTicks(Object value) {
+        value = unwrap(value);
+        if (value instanceof Long ticks) return ticks;
+        if (value instanceof Integer ticks) return ticks.longValue();
+        if (value instanceof Double ticks && Double.isFinite(ticks) && ticks == Math.rint(ticks)) return ticks.longValue();
+        throw new Trap("ARC-R3026", "wait duration must be whole ticks");
+    }
     private static boolean truthy(Object value) { value = unwrap(value); return value instanceof Boolean b ? b : value != null; }
     private static Object safe(Object value) { return value == null ? None.VALUE : value; }
     private static Object unwrap(Object value) { return value == None.VALUE ? null : value; }

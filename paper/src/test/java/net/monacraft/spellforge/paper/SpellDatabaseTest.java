@@ -127,4 +127,21 @@ class SpellDatabaseTest {
             assertEquals(2, database.arcSpells(owner).getFirst().revision());
         }
     }
+
+    @Test void persistentArcStateHonorsTypeTtlMigrationAndPlayerErasure() throws Exception {
+        UUID owner = UUID.randomUUID(), spell = UUID.randomUUID();
+        long now = System.currentTimeMillis();
+        try (SpellDatabase database = new SpellDatabase(temp.resolve("arc-state.sqlite"))) {
+            database.putArcState(owner, spell, "hits", "PLAYER", 12L, 1, now + 10_000);
+            var first = database.arcState(owner, spell, "hits", "PLAYER", now).orElseThrow();
+            assertEquals("INT", first.type()); assertEquals(12L, first.value()); assertEquals(1, first.schemaVersion());
+            database.putArcState(owner, spell, "hits", "PLAYER", 14L, 2, now + 20_000);
+            assertEquals(2, database.arcState(owner, spell, "hits", "PLAYER", now).orElseThrow().schemaVersion());
+            database.putArcState(owner, spell, "expired", "SPELL", true, 1, now + 30_000);
+            assertTrue(database.arcState(owner, spell, "expired", "SPELL", now + 30_001).isEmpty());
+            database.putArcState(owner, spell, "name", "SPELL", "arc", 1, null);
+            assertEquals(2, database.eraseArcStateOwner(owner));
+            assertTrue(database.arcState(owner, spell, "hits", "PLAYER", now).isEmpty());
+        }
+    }
 }

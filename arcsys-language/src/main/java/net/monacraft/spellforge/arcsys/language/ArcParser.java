@@ -177,10 +177,34 @@ public final class ArcParser {
         if (match(COLON)) skipTypeReference();
         consume(EQUAL, "ARC-E1041", "変数の初期値が必要です");
         Expr initializer = expression();
-        if (match(PERSIST)) skipBalancedCall();
+        Persistence persistence = null;
+        if (match(PERSIST)) persistence = persistence(previous(), begin.type());
         Token end = finishStatement();
         Binding binding = switch (begin.type()) { case LET -> Binding.LET; case CONST -> Binding.CONST; default -> Binding.STATE; };
-        return new VarDecl(binding, name.lexeme(), initializer, join(begin.span(), end.span()));
+        return new VarDecl(binding, name.lexeme(), initializer, persistence, join(begin.span(), end.span()));
+    }
+
+    private Persistence persistence(Token begin, Type declarationType) {
+        if (declarationType != STATE) throw error(begin, "ARC-E1042", "persistはstateにだけ指定できます");
+        consume(LEFT_PAREN, "ARC-E1043", "persistの '(' が必要です");
+        Token scope = consumeAny("ARC-E1044", "persist範囲はplayer、spell、sessionのいずれかです", IDENT, SPELL);
+        PersistenceScope persistenceScope = switch (scope.lexeme().toLowerCase(Locale.ROOT)) {
+            case "player" -> PersistenceScope.PLAYER;
+            case "spell" -> PersistenceScope.SPELL;
+            case "session" -> PersistenceScope.SESSION;
+            default -> throw error(scope, "ARC-E1044", "persist範囲はplayer、spell、sessionのいずれかです");
+        };
+        long ttl = 0;
+        if (match(COMMA)) {
+            Token ttlName = consumeName("ARC-E1045", "ttl指定が必要です");
+            if (!ttlName.lexeme().equalsIgnoreCase("ttl")) throw error(ttlName, "ARC-E1045", "persistで指定できるのはttlだけです");
+            consume(COLON, "ARC-E1046", "ttlの ':' が必要です");
+            Token duration = consume(DURATION, "ARC-E1047", "ttlはDurationで指定してください");
+            ttl = ((UnitValue) duration.literal()).ticks();
+            if (ttl < 1 || ttl > 6_307_200_000L) throw error(duration, "ARC-E1048", "ttlは1tick〜10年の範囲で指定してください");
+        }
+        consume(RIGHT_PAREN, "ARC-E1049", "persistの ')' が必要です");
+        return new Persistence(persistenceScope, ttl);
     }
 
     private IfStmt ifStatement(Token begin) {
@@ -442,6 +466,8 @@ public final class ArcParser {
                 if (isPropertyName(peek().type())) name = advance();
                 else throw error(peek(), "ARC-E1110", "プロパティ名が必要です");
                 expr = new Member(expr, name.lexeme(), join(expr.span(), name.span()));
+            } else if (match(QUESTION)) {
+                expr = new TryExpr(expr, join(expr.span(), previous().span()));
             } else break;
         }
         return expr;
@@ -467,10 +493,10 @@ public final class ArcParser {
         if (match(MATCH)) return matchExpression(previous());
         if (match(FALSE)) return new Literal(false, previous().span());
         if (match(TRUE)) return new Literal(true, previous().span());
-        if (match(NONE)) return new Literal(null, previous().span());
+        if (match(NONE)) return new VariantExpr("None", null, previous().span());
         if (match(INT, FLOAT, STRING, DURATION)) return new Literal(previous().literal(), previous().span());
         // "spell" is both a declaration keyword and the safe spell.* host namespace.
-        if (match(IDENT, SPELL)) return new Variable(previous().lexeme(), previous().span());
+        if (isPropertyName(peek().type()) || check(SPELL)) { advance(); return new Variable(previous().lexeme(), previous().span()); }
         if (match(LEFT_BRACKET)) {
             Token begin = previous();
             List<Expr> values = new ArrayList<>();
@@ -493,7 +519,7 @@ public final class ArcParser {
         while (!check(RIGHT_BRACE) && !atEnd()) {
             Pattern pattern = matchPattern();
             consume(FAT_ARROW, "ARC-E1141", "matchアームの '=>' が必要です");
-            Expr value = expression();
+            Expr value = check(LEFT_BRACE) ? new BlockExpr(block(), previous().span()) : expression();
             arms.add(new MatchArm(pattern, value, join(pattern.span(), value.span())));
             match(COMMA, SEMICOLON);
         }
@@ -504,7 +530,8 @@ public final class ArcParser {
 
     private Pattern matchPattern() {
         Token begin = peek();
-        if (match(IDENT) && "_".equals(previous().lexeme())) return new WildcardPattern(previous().span());
+        if (check(IDENT) && "_".equals(peek().lexeme())) { advance(); return new WildcardPattern(previous().span()); }
+        if (match(NONE)) return new VariantPattern("None", null, previous().span());
         if (match(INT, FLOAT, STRING, DURATION, TRUE, FALSE)) {
             Token first = previous();
             Object value = first.type() == TRUE ? true : first.type() == FALSE ? false : first.literal();
@@ -518,6 +545,12 @@ public final class ArcParser {
         if (match(IDENT)) {
             StringBuilder name = new StringBuilder(previous().lexeme());
             Span span = previous().span();
+            if (match(LEFT_PAREN)) {
+                String binding = null;
+                if (!check(RIGHT_PAREN)) binding = consumeName("ARC-E1147", "値を受け取る変数名が必要です").lexeme();
+                Token end = consume(RIGHT_PAREN, "ARC-E1148", "バリアントパターンの ')' が必要です");
+                return new VariantPattern(name.toString(), binding, join(span, end.span()));
+            }
             if (match(DOUBLE_COLON)) { Token part = consume(IDENT, "ARC-E1145", "列挙値が必要です"); name.append("::").append(part.lexeme()); span = join(span, part.span()); }
             return new EnumPattern(name.toString(), span);
         }
@@ -526,6 +559,11 @@ public final class ArcParser {
 
     private Token consumeAny(String code, String message, Type... types) {
         if (match(types)) return previous();
+        throw error(peek(), code, message);
+    }
+
+    private Token consumeName(String code, String message) {
+        if (isPropertyName(peek().type())) return advance();
         throw error(peek(), code, message);
     }
 

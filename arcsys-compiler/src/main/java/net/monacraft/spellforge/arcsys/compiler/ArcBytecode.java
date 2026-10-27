@@ -16,7 +16,7 @@ import java.util.TreeMap;
 public final class ArcBytecode {
     private ArcBytecode() { }
 
-    public static final int FORMAT_VERSION = 2;
+    public static final int FORMAT_VERSION = 3;
 
     public enum Op {
         PUSH_NONE, PUSH_BOOL, PUSH_LONG, PUSH_DOUBLE, PUSH_STRING,
@@ -24,10 +24,21 @@ public final class ArcBytecode {
         ADD, SUB, MUL, DIV, MOD, NEGATE, NOT,
         EQ, NE, LT, LE, GT, GE, AND, OR,
         GET_MEMBER, MAKE_LIST,
+        MAKE_VARIANT, IS_VARIANT, UNWRAP_VARIANT, COERCE_RESULT,
         CALL_HOST, CALL,
+        SUSPEND,
         JUMP, JUMP_IF_FALSE,
         ITER_INIT, ITER_HAS_NEXT, ITER_NEXT,
         RETURN, HALT
+    }
+
+    /** Runtime algebraic value used by Option and Result. */
+    public record Variant(String tag, Object value, boolean hasValue) {
+        public Variant {
+            if (tag == null || tag.isBlank()) throw new IllegalArgumentException("tag");
+        }
+        public static Variant empty(String tag) { return new Variant(tag, null, false); }
+        public static Variant of(String tag, Object value) { return new Variant(tag, value, true); }
     }
 
     public record Instruction(Op op, String text, long number, double decimal) {
@@ -55,7 +66,7 @@ public final class ArcBytecode {
             try {
                 ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                 DataOutputStream out = new DataOutputStream(bytes);
-                out.writeInt(0x41524332); // ARC2
+                out.writeInt(0x41524333); // ARC3
                 out.writeInt(FORMAT_VERSION);
                 writeUtf8(out, spellName);
                 out.writeInt(entryPoints.size());

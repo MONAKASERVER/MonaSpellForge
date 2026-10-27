@@ -95,6 +95,14 @@ final class SpellDatabase implements AutoCloseable {
                   requested_revision INTEGER NOT NULL, result_code TEXT NOT NULL,
                   source_hash TEXT, created_at INTEGER NOT NULL
                 )""");
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS arc_state(
+                  owner_uuid TEXT NOT NULL, spell_uuid TEXT NOT NULL, state_key TEXT NOT NULL,
+                  scope TEXT NOT NULL, type_tag TEXT NOT NULL, value_json TEXT NOT NULL,
+                  schema_version INTEGER NOT NULL, expires_at INTEGER, updated_at INTEGER NOT NULL,
+                  PRIMARY KEY(owner_uuid,spell_uuid,state_key,scope)
+                )""");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS arc_state_expiry_idx ON arc_state(expires_at)");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, unixepoch())");
         }
@@ -105,6 +113,7 @@ final class SpellDatabase implements AutoCloseable {
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(3, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, unixepoch())");
+            statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, unixepoch())");
         }
     }
 
@@ -671,6 +680,92 @@ final class SpellDatabase implements AutoCloseable {
         } catch (SQLException error) { throw new IllegalStateException("Could not read ArcSys audit", error); }
     }
 
+    synchronized void putArcState(UUID ownerId, UUID spellId, String key, String scope, Object value,
+                                  int schemaVersion, Long expiresAt) {
+        Objects.requireNonNull(ownerId); Objects.requireNonNull(spellId); Objects.requireNonNull(key); Objects.requireNonNull(scope);
+        if (key.isBlank() || key.length() > 64) throw new IllegalArgumentException("state key");
+        if (!scope.equals("PLAYER") && !scope.equals("SPELL")) throw new IllegalArgumentException("persistent scope");
+        if (schemaVersion < 1) throw new IllegalArgumentException("schemaVersion");
+        String type = arcStateType(value);
+        String json = gson.toJson(value);
+        if (json.length() > 8_192) throw new IllegalArgumentException("state value too large");
+        long now = System.currentTimeMillis();
+        if (expiresAt != null && expiresAt <= now) throw new IllegalArgumentException("state already expired");
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO arc_state(owner_uuid,spell_uuid,state_key,scope,type_tag,value_json,schema_version,expires_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_uuid,spell_uuid,state_key,scope) DO UPDATE SET
+                type_tag=excluded.type_tag,value_json=excluded.value_json,schema_version=excluded.schema_version,
+                expires_at=excluded.expires_at,updated_at=excluded.updated_at""")) {
+            statement.setString(1, ownerId.toString()); statement.setString(2, spellId.toString());
+            statement.setString(3, key); statement.setString(4, scope); statement.setString(5, type);
+            statement.setString(6, json); statement.setInt(7, schemaVersion);
+            if (expiresAt == null) statement.setNull(8, Types.BIGINT); else statement.setLong(8, expiresAt);
+            statement.setLong(9, now); statement.executeUpdate();
+        } catch (SQLException error) { throw new IllegalStateException("Could not save ArcSys state", error); }
+    }
+
+    synchronized Optional<ArcStateRecord> arcState(UUID ownerId, UUID spellId, String key, String scope, long now) {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT type_tag,value_json,schema_version,expires_at,updated_at FROM arc_state
+                WHERE owner_uuid=? AND spell_uuid=? AND state_key=? AND scope=?""")) {
+            statement.setString(1, ownerId.toString()); statement.setString(2, spellId.toString());
+            statement.setString(3, key); statement.setString(4, scope);
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return Optional.empty();
+                Long expires = row.getObject(4) == null ? null : row.getLong(4);
+                if (expires != null && expires <= now) {
+                    deleteArcState(ownerId, spellId, key, scope);
+                    return Optional.empty();
+                }
+                String type = row.getString(1);
+                return Optional.of(new ArcStateRecord(type, decodeArcState(type, row.getString(2)),
+                        row.getInt(3), expires, row.getLong(5)));
+            }
+        } catch (SQLException error) { throw new IllegalStateException("Could not read ArcSys state", error); }
+    }
+
+    synchronized int cleanupExpiredArcState(long now, int limit) {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                DELETE FROM arc_state WHERE rowid IN (
+                  SELECT rowid FROM arc_state WHERE expires_at IS NOT NULL AND expires_at<=? LIMIT ?
+                )""")) {
+            statement.setLong(1, now); statement.setInt(2, Math.max(1, Math.min(limit, 10_000)));
+            return statement.executeUpdate();
+        } catch (SQLException error) { throw new IllegalStateException("Could not clean ArcSys state", error); }
+    }
+
+    synchronized int eraseArcStateOwner(UUID ownerId) {
+        try (PreparedStatement statement = connection.prepareStatement("DELETE FROM arc_state WHERE owner_uuid=?")) {
+            statement.setString(1, ownerId.toString()); return statement.executeUpdate();
+        } catch (SQLException error) { throw new IllegalStateException("Could not erase ArcSys player state", error); }
+    }
+
+    private void deleteArcState(UUID ownerId, UUID spellId, String key, String scope) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "DELETE FROM arc_state WHERE owner_uuid=? AND spell_uuid=? AND state_key=? AND scope=?")) {
+            statement.setString(1, ownerId.toString()); statement.setString(2, spellId.toString());
+            statement.setString(3, key); statement.setString(4, scope); statement.executeUpdate();
+        }
+    }
+
+    private static String arcStateType(Object value) {
+        if (value instanceof Boolean) return "BOOL";
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long) return "INT";
+        if (value instanceof Float || value instanceof Double) return "FLOAT";
+        if (value instanceof String text && text.length() <= 2_048) return "STRING";
+        throw new IllegalArgumentException("unsupported persistent state type");
+    }
+
+    private Object decodeArcState(String type, String json) {
+        return switch (type) {
+            case "BOOL" -> gson.fromJson(json, Boolean.class);
+            case "INT" -> gson.fromJson(json, Long.class);
+            case "FLOAT" -> gson.fromJson(json, Double.class);
+            case "STRING" -> gson.fromJson(json, String.class);
+            default -> throw new IllegalStateException("Unknown ArcSys state type");
+        };
+    }
+
     private void auditArcDeploy(UUID operationId, UUID spellId, UUID ownerId, long requestedRevision,
                                 String resultCode, String sourceHash, long at) throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement("INSERT INTO arc_deploy_audit VALUES(?,?,?,?,?,?,?)")) {
@@ -695,6 +790,7 @@ final class SpellDatabase implements AutoCloseable {
     record ArcSpellRevision(UUID spellId, String name, long revision, boolean enabled, String source,
                             String sourceHash, String capabilities, String requirements, long createdAt) { }
     record ArcDeployAudit(UUID spellId, long requestedRevision, String resultCode, String sourceHash, long createdAt) { }
+    record ArcStateRecord(String type, Object value, int schemaVersion, Long expiresAt, long updatedAt) { }
     static final class OptimisticConflict extends RuntimeException { final long revision; OptimisticConflict(long revision) { this.revision = revision; } }
     static final class FragmentUnavailable extends RuntimeException { final UUID instanceId; FragmentUnavailable(UUID instanceId) { this.instanceId = instanceId; } }
     static final class FragmentStorageFull extends RuntimeException {

@@ -77,8 +77,15 @@ final class ArcSysService {
         JsonObject response = diagnostics(compiled);
         if (!compiled.valid()) return response;
         String entry = compiled.program().entryPoints().keySet().stream().sorted().findFirst().orElseThrow();
-        ArcVm.Result result = new ArcVm().run(compiled.program(), entry, Map.of(), ArcVm.Limits.production(), new SimulationHost());
+        ArcVm vm = new ArcVm();
+        ArcVm.Result result = vm.run(compiled.program(), entry, Map.of(), ArcVm.Limits.production(), new SimulationHost());
+        long virtualTicks = 0;
+        while (result.status() == ArcVm.Status.SUSPENDED && result.continuation().suspensionCount() <= ArcVm.MAX_SUSPENSIONS) {
+            virtualTicks += result.resumeAfterTicks();
+            result = vm.resume(compiled.program(), result.continuation(), ArcVm.Limits.production(), new SimulationHost());
+        }
         response.addProperty("status", result.status().name()); response.addProperty("fuelUsed", result.fuelUsed());
+        response.addProperty("virtualTicks", virtualTicks);
         response.addProperty("runtimeCode", result.code()); response.addProperty("runtimeMessage", result.message());
         response.add("effects", new com.google.gson.Gson().toJsonTree(result.effects()));
         return response;

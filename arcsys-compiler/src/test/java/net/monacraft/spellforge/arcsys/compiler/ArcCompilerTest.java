@@ -26,6 +26,23 @@ class ArcCompilerTest {
         }
         assertTrue(cleanup >= 0 && cleanup < firstReturn);
     }
+
+    @Test
+    void rejectsQuestionOperatorForNonResultValue() {
+        var result = new ArcCompiler().compile("spell X { on cast { return Some(1)?; } }");
+        assertFalse(result.valid());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("ARC-T5015")));
+    }
+
+    @Test
+    void embedsPersistentStateScopeAndTtlInClosedHostCalls() {
+        var result = new ArcCompiler().compile("spell X { state hits = 0 persist(player, ttl: 7d); on cast { hits += 1; } }");
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        assertTrue(result.program().instructions().stream().anyMatch(instruction ->
+                instruction.op() == ArcBytecode.Op.CALL_HOST && instruction.text().equals("state.get\u0000default,name,scope,ttl")));
+        assertTrue(result.program().instructions().stream().anyMatch(instruction ->
+                instruction.op() == ArcBytecode.Op.PUSH_LONG && instruction.number() == 7L * 24 * 60 * 60 * 20));
+    }
     private static final String SOURCE = """
         spell Test { on pulse(20t) {
           let targets = mobs.hostile(radius: 24, limit: 8);

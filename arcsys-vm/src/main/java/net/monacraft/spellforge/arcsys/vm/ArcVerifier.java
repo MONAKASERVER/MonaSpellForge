@@ -26,6 +26,10 @@ public final class ArcVerifier {
                 issues.add(new Issue("ARC-V4004", pc, "invalid jump target"));
             if (instruction.op() == Op.MAKE_LIST && (instruction.number() < 0 || instruction.number() > ArcVm.MAX_LIST))
                 issues.add(new Issue("ARC-V4005", pc, "invalid list size"));
+            if (instruction.op() == Op.MAKE_VARIANT && (instruction.number() < 0 || instruction.number() > 1 || instruction.text().isBlank()))
+                issues.add(new Issue("ARC-V4009", pc, "invalid variant"));
+            if ((instruction.op() == Op.IS_VARIANT || instruction.op() == Op.UNWRAP_VARIANT) && instruction.text().isBlank())
+                issues.add(new Issue("ARC-V4010", pc, "invalid variant tag"));
             if (instruction.op() == Op.CALL_HOST) {
                 if (instruction.number() < 0 || instruction.number() > 32 || instruction.text().indexOf('\u0000') < 1)
                     issues.add(new Issue("ARC-V4006", pc, "invalid host descriptor"));
