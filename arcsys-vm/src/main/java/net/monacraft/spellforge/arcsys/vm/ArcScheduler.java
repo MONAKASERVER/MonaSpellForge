@@ -20,6 +20,7 @@ public final class ArcScheduler {
     public interface Listener {
         void completed(TaskId id, ArcVm.Result result);
         void trapped(TaskId id, ArcVm.Result result);
+        default void suspended(TaskId id, ArcVm.Result result) { }
         default void cancelled(TaskId id, String reason) { }
     }
 
@@ -79,6 +80,7 @@ public final class ArcScheduler {
     }
 
     public int activeTasks() { return tasks.size(); }
+    public boolean isActive(TaskId id) { return tasks.containsKey(id); }
 
     private void accept(TaskId id, Program program, ArcVm.Limits limits, ArcVm.Host host,
                         Listener listener, long currentTick, ArcVm.Result result) {
@@ -86,6 +88,7 @@ public final class ArcScheduler {
             case COMPLETED -> listener.completed(id, result);
             case TRAPPED -> listener.trapped(id, result);
             case SUSPENDED -> {
+                listener.suspended(id, result);
                 long dueTick;
                 try { dueTick = Math.addExact(currentTick, result.resumeAfterTicks()); }
                 catch (ArithmeticException overflow) {

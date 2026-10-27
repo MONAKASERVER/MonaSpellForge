@@ -16,6 +16,7 @@ This document separates implemented execution semantics from accepted design. A 
 - Resumable `wait` / `after` execution with opaque continuations, preserved fuel/variables/call stack/effects, bounded suspension count and a single-threaded tick scheduler with task and per-tick limits.
 - Parsed state persistence policies for player/spell/session scope and TTL, embedded closed-host metadata, plus bounded typed SQLite storage with schema versions, expiry cleanup and owner erasure.
 - `await parallel all`, `await parallel any` and `race` with separately compiled ArcVM branches, deterministic cooperative joins, aggregate fuel/effect accounting and cancellation-by-discard after resolution.
+- Paper main-thread ArcVM activation with per-cast ownership/permission/fragment revalidation, logout/command cancellation and bounded live target, mana, damage, potion, particle and persistent-state effects.
 - Capability discovery and closed APIs for math, targets, combat, mana, particles, displays, raycast, block/item observation, ArcSys storage and time.
 - Operator-only capability boundary for the future Skript bridge; arbitrary Skript, commands, JVM, OS, files and sockets remain unavailable.
 - Deterministic bytecode, verifier, fuel/stack/list/string/effect/call-depth limits and simulation effect requests.
@@ -31,10 +32,10 @@ This document separates implemented execution semantics from accepted design. A 
 - Full generic propagation for annotated `Option<T>` / `Result<T,E>` signatures and exhaustive user-defined enum checking (the runtime constructors, patterns and `?` semantics are implemented).
 - Full statement/block match arms and enum/struct runtime values.
 - General-purpose awaitable handles and conditional/event waits outside parallel groups.
-- Connecting persistent state storage to production ArcVM activation and an explicit operator/player erasure command (the typed SQLite, TTL cleanup, schema-version and owner-erasure layer is implemented).
+- An explicit operator/player persistent-data erasure command (production ArcVM state read/write is connected; the owner-erasure storage operation exists).
 - Contract `requires/ensures`, effect-function signatures and static budget annotations as enforceable constructs.
 - Target selection DSL, node `bind`, channel/charge/release and cross-spell signal loop prevention.
-- Production implementations for Display, virtual structures, raycast, PDC/storage and combat effects with WorldGuard/MythicMobs rules.
+- Production implementations for Display, virtual structures, raycast and PDC; explicit WorldGuard/MythicMobs adapters beyond Bukkit's cancellable damage path.
 - Allowlisted bidirectional Skript/SkBee event bridge.
 - Source maps, real breakpoints, variable watch and profiler counters.
 - Full VS Code graph editor and lossless code ↔ legacy node conversion.

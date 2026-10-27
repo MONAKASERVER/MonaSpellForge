@@ -19,6 +19,7 @@ permissions:
   monaspellforge.admin.audit: {default: op}
   monaspellforge.admin.stopcasts: {default: op}
   monaspellforge.arcsys.use: {default: true}
+  monaspellforge.arcsys.cast: {default: true}
   monaspellforge.arcsys.vscode: {default: true}
   monaspellforge.arcsys.debug: {default: op}
   monaspellforge.arcsys.deploy: {default: true}
