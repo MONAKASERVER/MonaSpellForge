@@ -35,6 +35,21 @@ class ArcSchedulerTest {
         assertEquals(1, first.cancelled.size() + second.cancelled.size());
     }
 
+    @Test void loadTestBoundsOneThousandConcurrentContinuations() {
+        var compiled = new ArcCompiler().compile("spell X { on cast { wait 1t; return 1; } }");
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        ArcScheduler scheduler = new ArcScheduler(new ArcVm(), 1_024, 128);
+        RecordingListener listener = new RecordingListener();
+        for (int i = 0; i < 1_000; i++)
+            scheduler.start(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(32, 0), new Host(), 0, listener);
+        assertEquals(1_000, scheduler.activeTasks());
+        int total = 0;
+        for (int tick = 1; tick <= 8; tick++) {
+            int resumed = scheduler.tick(tick); assertTrue(resumed <= 128); total += resumed;
+        }
+        assertEquals(1_000, total); assertEquals(0, scheduler.activeTasks()); assertEquals(1_000, listener.completed.size());
+    }
+
     private static final class RecordingListener implements ArcScheduler.Listener {
         final List<ArcVm.Result> completed = new ArrayList<>();
         final List<ArcVm.Result> trapped = new ArrayList<>();

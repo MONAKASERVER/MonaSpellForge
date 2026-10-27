@@ -27,7 +27,12 @@ public final class ArcVm {
     public interface Host {
         Object invoke(String api, List<Object> arguments, List<String> argumentNames, Execution execution);
         Object member(Object receiver, String name);
+        /** Debug hook. Production hosts keep the default and cannot pause execution. */
+        default DebugAction beforeInstruction(int pc, Instruction instruction, Map<String, Object> variables,
+                                              int stackDepth, int fuelRemaining) { return DebugAction.CONTINUE; }
     }
+
+    public enum DebugAction { CONTINUE, PAUSE }
 
     public static final class Execution {
         private final int maxEffects;
@@ -126,7 +131,14 @@ public final class ArcVm {
         try {
             while (pc >= 0 && pc < code.size()) {
                 if (fuel-- <= 0) throw new Trap("ARC-R3002", "fuel exhausted");
+                int instructionPc = pc;
                 Instruction instruction = code.get(pc++);
+                if (host.beforeInstruction(instructionPc, instruction, Map.copyOf(variables), stack.size(), fuel) == DebugAction.PAUSE) {
+                    Continuation continuation = new Continuation(program, instructionPc, stack, variables, calls,
+                            execution.effects(), fuel + 1, initialFuel, suspensionCount);
+                    return new Result(Status.SUSPENDED, null, initialFuel - fuel - 1, execution.effects(),
+                            "ARC-DEBUG-BREAKPOINT", "paused before instruction " + instructionPc, continuation, 0);
+                }
                 switch (instruction.op()) {
                     case PUSH_NONE -> push(stack, None.VALUE);
                     case PUSH_BOOL -> push(stack, instruction.number() != 0);

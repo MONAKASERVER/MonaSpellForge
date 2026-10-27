@@ -15,6 +15,7 @@ final class ArcSysService {
     private final SpellDatabase database;
     private final FragmentService fragments;
     private final ArcCompiler compiler = new ArcCompiler();
+    private final Map<UUID, DebugSession> debugSessions = new HashMap<>();
 
     ArcSysService(SpellDatabase database, FragmentService fragments) { this.database = database; this.fragments = fragments; }
 
@@ -24,7 +25,11 @@ final class ArcSysService {
             case "openSpell" -> open(player, payload);
             case "validate", "compile" -> compile(payload);
             case "deploy" -> deploy(player, payload);
-            case "simulate", "debugStart" -> simulate(player, payload);
+            case "simulate" -> simulate(player, payload);
+            case "debugStart" -> debugStart(player, payload);
+            case "debugContinue" -> debugContinue(player, payload);
+            case "debugState" -> debugState(player, payload);
+            case "debugStop" -> debugStop(player, payload);
             case "nodeGraph" -> graph(payload);
             case "logs" -> logs(player);
             case "studioSnapshot" -> studio(player);
@@ -89,6 +94,99 @@ final class ArcSysService {
         response.addProperty("runtimeCode", result.code()); response.addProperty("runtimeMessage", result.message());
         response.add("effects", new com.google.gson.Gson().toJsonTree(result.effects()));
         return response;
+    }
+
+    private JsonObject debugStart(Player player, JsonObject payload) {
+        requireDebug(player);
+        var compiled = compiler.compile(source(payload));
+        JsonObject response = diagnostics(compiled);
+        if (!compiled.valid()) return response;
+        if (debugSessions.size() >= 128 && !debugSessions.containsKey(player.getUniqueId()))
+            throw new ArcRequestException("DEBUG_LIMIT", "デバッグセッション上限です");
+        String entry = payload.has("entry") ? payload.get("entry").getAsString()
+                : compiled.program().entryPoints().keySet().stream().filter(value -> !value.startsWith("task:"))
+                .sorted().findFirst().orElseThrow();
+        if (!compiled.program().entryPoints().containsKey(entry)) throw new ArcRequestException("ENTRY_NOT_FOUND", "開始地点がありません");
+        DebugHost host = new DebugHost(intSet(payload, "breakpoints"), stringSet(payload, "watches"), true);
+        ArcVm.Result result = new ArcVm().run(compiled.program(), entry, Map.of(), ArcVm.Limits.production(), host);
+        UUID id = UUID.randomUUID();
+        if (result.status() == ArcVm.Status.SUSPENDED)
+            debugSessions.put(player.getUniqueId(), new DebugSession(id, compiled.program(), result.continuation(), host, System.currentTimeMillis()));
+        response.addProperty("debugSessionId", id.toString());
+        addDebugResult(response, result, host);
+        return response;
+    }
+
+    private JsonObject debugContinue(Player player, JsonObject payload) {
+        requireDebug(player);
+        DebugSession session = session(player, payload);
+        String mode = payload.has("mode") ? payload.get("mode").getAsString() : "continue";
+        if (!mode.equals("continue") && !mode.equals("step")) throw new ArcRequestException("DEBUG_MODE", "modeはcontinueまたはstepです");
+        session.host().arm(mode.equals("step"));
+        ArcVm.Result result = new ArcVm().resume(session.program(), session.continuation(), ArcVm.Limits.production(), session.host());
+        JsonObject response = new JsonObject();
+        if (result.status() == ArcVm.Status.SUSPENDED)
+            debugSessions.put(player.getUniqueId(), new DebugSession(session.id(), session.program(), result.continuation(), session.host(), System.currentTimeMillis()));
+        else debugSessions.remove(player.getUniqueId());
+        response.addProperty("debugSessionId", session.id().toString());
+        addDebugResult(response, result, session.host());
+        return response;
+    }
+
+    private JsonObject debugState(Player player, JsonObject payload) {
+        requireDebug(player);
+        DebugSession session = session(player, payload);
+        JsonObject result = new JsonObject(); result.addProperty("debugSessionId", session.id().toString());
+        result.addProperty("status", "PAUSED"); addSnapshot(result, session.host()); return result;
+    }
+
+    private JsonObject debugStop(Player player, JsonObject payload) {
+        requireDebug(player);
+        DebugSession session = session(player, payload); debugSessions.remove(player.getUniqueId());
+        JsonObject result = new JsonObject(); result.addProperty("debugSessionId", session.id().toString());
+        result.addProperty("status", "STOPPED"); return result;
+    }
+
+    private void addDebugResult(JsonObject response, ArcVm.Result result, DebugHost host) {
+        String state = result.status() == ArcVm.Status.SUSPENDED && "ARC-DEBUG-BREAKPOINT".equals(result.code()) ? "PAUSED"
+                : result.status() == ArcVm.Status.SUSPENDED ? "WAITING" : result.status().name();
+        response.addProperty("status", state); response.addProperty("fuelUsed", result.fuelUsed());
+        response.addProperty("runtimeCode", result.code()); response.addProperty("runtimeMessage", result.message());
+        response.add("effects", new com.google.gson.Gson().toJsonTree(result.effects())); addSnapshot(response, host);
+    }
+
+    private void addSnapshot(JsonObject response, DebugHost host) {
+        response.addProperty("pc", host.pausedPc); response.addProperty("op", host.pausedOp);
+        response.addProperty("stackDepth", host.stackDepth); response.addProperty("fuelRemaining", host.fuelRemaining);
+        response.add("watches", new com.google.gson.Gson().toJsonTree(host.watched));
+        response.add("trace", new com.google.gson.Gson().toJsonTree(host.trace));
+    }
+
+    private DebugSession session(Player player, JsonObject payload) {
+        DebugSession session = debugSessions.get(player.getUniqueId());
+        if (session == null) throw new ArcRequestException("DEBUG_NOT_FOUND", "デバッグセッションがありません");
+        if (payload.has("debugSessionId") && !session.id().toString().equals(payload.get("debugSessionId").getAsString()))
+            throw new ArcRequestException("DEBUG_SESSION_MISMATCH", "デバッグセッションが一致しません");
+        if (System.currentTimeMillis() - session.touchedAt() > 15 * 60_000L) {
+            debugSessions.remove(player.getUniqueId()); throw new ArcRequestException("DEBUG_EXPIRED", "デバッグセッションの期限が切れました");
+        }
+        return session;
+    }
+
+    private static Set<Integer> intSet(JsonObject payload, String name) {
+        if (!payload.has(name) || !payload.get(name).isJsonArray()) return Set.of();
+        Set<Integer> values = new TreeSet<>(); payload.getAsJsonArray(name).forEach(value -> {
+            int pc = value.getAsInt(); if (pc >= 0 && pc < 4096 && values.size() < 128) values.add(pc);
+        }); return Set.copyOf(values);
+    }
+    private static Set<String> stringSet(JsonObject payload, String name) {
+        if (!payload.has(name) || !payload.get(name).isJsonArray()) return Set.of();
+        Set<String> values = new TreeSet<>(); payload.getAsJsonArray(name).forEach(value -> {
+            String watch = value.getAsString(); if (watch.matches("[A-Za-z_$][A-Za-z0-9_$]{0,63}") && values.size() < 64) values.add(watch);
+        }); return Set.copyOf(values);
+    }
+    private static void requireDebug(Player player) {
+        if (!player.hasPermission("monaspellforge.arcsys.debug")) throw new ArcRequestException("NO_PERMISSION", "デバッグ権限がありません");
     }
 
     private JsonObject list(Player player) {
@@ -186,7 +284,7 @@ final class ArcSysService {
         ArcRequestException(String code, String message) { super(message); this.code = code; }
     }
 
-    private static final class SimulationHost implements ArcVm.Host {
+    private static class SimulationHost implements ArcVm.Host {
         public Object invoke(String api, List<Object> arguments, List<String> names, ArcVm.Execution execution) {
             return switch (api) {
                 case "mobs.hostile", "entities.hostile" -> List.of(Map.of("id", "simulation-target", "hp_ratio", 0.5));
@@ -211,4 +309,42 @@ final class ArcSysService {
         }
         public Object member(Object receiver, String name) { return receiver instanceof Map<?, ?> map ? map.get(name) : null; }
     }
+
+    private static final class DebugHost extends SimulationHost {
+        private final Set<Integer> breakpoints;
+        private final Set<String> watchNames;
+        private final List<Map<String, Object>> trace = new ArrayList<>();
+        private boolean initialPause;
+        private boolean step;
+        private int skipPc = -1;
+        private int pausedPc = -1;
+        private String pausedOp = "";
+        private int stackDepth;
+        private int fuelRemaining;
+        private Map<String, Object> watched = Map.of();
+
+        DebugHost(Set<Integer> breakpoints, Set<String> watchNames, boolean initialPause) {
+            this.breakpoints = breakpoints; this.watchNames = watchNames; this.initialPause = initialPause;
+        }
+
+        void arm(boolean step) { this.step = step; this.skipPc = pausedPc; }
+
+        @Override public ArcVm.DebugAction beforeInstruction(int pc, net.monacraft.spellforge.arcsys.compiler.ArcBytecode.Instruction instruction,
+                                                             Map<String, Object> variables, int stackDepth, int fuelRemaining) {
+            if (trace.size() >= 256) trace.removeFirst();
+            trace.add(Map.of("pc", pc, "op", instruction.op().name(), "stack", stackDepth, "fuel", fuelRemaining));
+            if (pc == skipPc) { skipPc = -1; return ArcVm.DebugAction.CONTINUE; }
+            boolean pause = initialPause || step || breakpoints.contains(pc);
+            initialPause = false; step = false;
+            if (!pause) return ArcVm.DebugAction.CONTINUE;
+            this.pausedPc = pc; this.pausedOp = instruction.op().name(); this.stackDepth = stackDepth; this.fuelRemaining = fuelRemaining;
+            Map<String, Object> selected = new TreeMap<>();
+            for (String name : watchNames) if (variables.containsKey(name)) selected.put(name, variables.get(name));
+            this.watched = Map.copyOf(selected);
+            return ArcVm.DebugAction.PAUSE;
+        }
+    }
+
+    private record DebugSession(UUID id, net.monacraft.spellforge.arcsys.compiler.ArcBytecode.Program program,
+                                ArcVm.Continuation continuation, DebugHost host, long touchedAt) { }
 }

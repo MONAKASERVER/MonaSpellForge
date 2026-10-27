@@ -11,6 +11,36 @@ import net.monacraft.spellforge.arcsys.compiler.ArcBytecode;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ArcVmTest {
+    @Test void contractPreconditionStopsHandlerWithResultError() {
+        var compiled = new ArcCompiler().compile("contract Safe { requires false; ensures true; } spell X { on cast { return 99; } }");
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        var result = new ArcVm().run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), new NoopHost());
+        assertEquals(ArcVm.Status.COMPLETED, result.status());
+        assertInstanceOf(ArcBytecode.Variant.class, result.value());
+        assertEquals("Err", ((ArcBytecode.Variant) result.value()).tag());
+        assertEquals("CONTRACT_VIOLATION", ((ArcBytecode.Variant) result.value()).value());
+    }
+    @Test void debuggerPausesBeforeInstructionAndResumesWithoutExecutingItTwice() {
+        var compiled = new ArcCompiler().compile("spell X { on cast { let watched = 7; return watched + 1; } }");
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        ArcVm vm = new ArcVm();
+        class DebugHost extends NoopHost {
+            boolean armed = true;
+            public ArcVm.DebugAction beforeInstruction(int pc, ArcBytecode.Instruction instruction,
+                                                       Map<String, Object> variables, int stackDepth, int fuelRemaining) {
+                if (armed && variables.containsKey("watched")) { armed = false; return ArcVm.DebugAction.PAUSE; }
+                return ArcVm.DebugAction.CONTINUE;
+            }
+        }
+        DebugHost host = new DebugHost();
+        var paused = vm.run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), host);
+        assertEquals(ArcVm.Status.SUSPENDED, paused.status());
+        assertEquals("ARC-DEBUG-BREAKPOINT", paused.code());
+        assertEquals(0, paused.resumeAfterTicks());
+        var completed = vm.resume(compiled.program(), paused.continuation(), new ArcVm.Limits(100, 0), host);
+        assertEquals(ArcVm.Status.COMPLETED, completed.status());
+        assertEquals(8.0, completed.value());
+    }
     @Test void executesOnlyThroughClosedHostAndProducesEffects() {
         String source = "spell X { on cast { let t = target.nearest(8); spell.cast(\"THUNDER\", t); } }";
         var compiled = new ArcCompiler().compile(source);
@@ -162,7 +192,7 @@ class ArcVmTest {
         assertEquals(ArcVm.Status.COMPLETED, race.status()); assertEquals(true, race.value());
     }
 
-    private static final class NoopHost implements ArcVm.Host {
+    private static class NoopHost implements ArcVm.Host {
         public Object invoke(String api, List<Object> arguments, List<String> argumentNames, ArcVm.Execution execution) { return 1L; }
         public Object member(Object receiver, String name) { return null; }
     }

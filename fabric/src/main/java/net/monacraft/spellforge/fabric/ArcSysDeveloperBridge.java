@@ -121,7 +121,7 @@ final class ArcSysDeveloperBridge extends WebSocketServer {
     private boolean allowedType(String type) {
         return switch (type) {
             case "listSpells", "openSpell", "compile", "validate", "deploy", "simulate",
-                 "nodeGraph", "debugStart", "logs", "studioSnapshot" -> true;
+                 "nodeGraph", "debugStart", "debugContinue", "debugState", "debugStop", "logs", "studioSnapshot" -> true;
             default -> false;
         };
     }

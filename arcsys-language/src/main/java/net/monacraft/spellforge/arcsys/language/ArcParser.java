@@ -33,17 +33,24 @@ public final class ArcParser {
         List<SpellDecl> spells = new ArrayList<>();
         List<FunctionDecl> globalFunctions = new ArrayList<>();
         List<VarDecl> globalConstants = new ArrayList<>();
+        List<Expr> preconditions = new ArrayList<>(), postconditions = new ArrayList<>();
         Token first = peek();
         while (!atEnd()) {
             try {
                 while (match(AT_SIGN)) skipAnnotation();
                 if (match(MODULE, USE)) skipUntilSemicolon();
                 else if (match(CONST)) globalConstants.add(variable(previous()));
-                else if (match(PUB, PRIVATE, EFFECT)) {
-                    if (match(FN)) globalFunctions.add(function(previous()));
+                else if (match(PUB, PRIVATE)) {
+                    boolean effectful = match(EFFECT);
+                    if (match(FN)) globalFunctions.add(function(previous(), effectful));
                     else skipTopLevelDeclaration();
                 }
-                else if (match(FN)) globalFunctions.add(function(previous()));
+                else if (match(EFFECT)) {
+                    consume(FN, "ARC-E1025", "effectの後にはfnが必要です");
+                    globalFunctions.add(function(previous(), true));
+                }
+                else if (match(FN)) globalFunctions.add(function(previous(), false));
+                else if (match(CONTRACT)) parseContract(preconditions, postconditions);
                 else if (check(SPELL)) spells.add(spell());
                 else if (match(STRUCT, ENUM, TYPE, TRAIT, IMPL)) skipTopLevelDeclaration();
                 else throw error(peek(), "ARC-E1000", "トップレベル宣言が不正です", "module, use, const, fn, struct, enum, type, spell を使用してください");
@@ -53,7 +60,12 @@ public final class ArcParser {
         }
         if (!globalFunctions.isEmpty() || !globalConstants.isEmpty()) {
             spells = spells.stream().map(spell -> new SpellDecl(spell.name(), spell.requiredFragments(), spell.requiredPermissions(),
-                    concat(globalConstants, spell.states()), spell.handlers(), concat(globalFunctions, spell.functions()), spell.span())).toList();
+                    concat(globalConstants, spell.states()), spell.handlers(), concat(globalFunctions, spell.functions()),
+                    concat(preconditions, spell.preconditions()), concat(postconditions, spell.postconditions()), spell.span())).toList();
+        } else if (!preconditions.isEmpty() || !postconditions.isEmpty()) {
+            spells = spells.stream().map(spell -> new SpellDecl(spell.name(), spell.requiredFragments(), spell.requiredPermissions(),
+                    spell.states(), spell.handlers(), spell.functions(), concat(preconditions, spell.preconditions()),
+                    concat(postconditions, spell.postconditions()), spell.span())).toList();
         }
         Span span = spells.isEmpty() ? first.span() : join(first.span(), previous().span());
         return new ParseResult(new Program(spells, span), diagnostics);
@@ -74,7 +86,11 @@ public final class ArcParser {
             try {
                 while (match(AT_SIGN)) skipAnnotation();
                 if (match(ON)) handlers.add(handler(previous()));
-                else if (match(FN)) functions.add(function(previous()));
+                else if (match(EFFECT)) {
+                    consume(FN, "ARC-E1025", "effectの後にはfnが必要です");
+                    functions.add(function(previous(), true));
+                }
+                else if (match(FN)) functions.add(function(previous(), false));
                 else if (match(STATE)) states.add(variable(previous()));
                 else if (match(REQUIRES)) parseRequires(requiredFragments, requiredPermissions);
                 else throw error(peek(), "ARC-E1004", "術式直下には on または fn を記述してください", "イベントハンドラか関数へ移動してください");
@@ -85,6 +101,17 @@ public final class ArcParser {
         Token end = consume(RIGHT_BRACE, "ARC-E1005", "術式本体を閉じる '}' が必要です");
         return new SpellDecl(name.literal() instanceof String value ? value : name.lexeme(), requiredFragments, requiredPermissions,
                 states, handlers, functions, join(begin.span(), end.span()));
+    }
+
+    private void parseContract(List<Expr> preconditions, List<Expr> postconditions) {
+        consumeName("ARC-E1160", "契約名が必要です");
+        consume(LEFT_BRACE, "ARC-E1161", "contract本体の'{'が必要です");
+        while (!check(RIGHT_BRACE) && !atEnd()) {
+            if (match(REQUIRES)) { Expr value = expression(); preconditions.add(value); finishStatement(); }
+            else if (match(ENSURES)) { Expr value = expression(); postconditions.add(value); finishStatement(); }
+            else throw error(peek(), "ARC-E1162", "contractにはrequiresまたはensuresを記述してください");
+        }
+        consume(RIGHT_BRACE, "ARC-E1163", "contract本体を閉じる'}'が必要です");
     }
 
     private HandlerDecl handler(Token begin) {
@@ -115,7 +142,7 @@ public final class ArcParser {
         return new HandlerDecl(trigger, argument, body, join(begin.span(), body.span()));
     }
 
-    private FunctionDecl function(Token begin) {
+    private FunctionDecl function(Token begin, boolean effectful) {
         Token name = consume(IDENT, "ARC-E1020", "関数名が必要です");
         consume(LEFT_PAREN, "ARC-E1021", "引数リストの '(' が必要です");
         List<String> parameters = new ArrayList<>();
@@ -128,8 +155,17 @@ public final class ArcParser {
         }
         consume(RIGHT_PAREN, "ARC-E1024", "引数リストの ')' が必要です");
         if (match(ARROW)) skipTypeReferenceBeforeBlock();
+        Set<String> declaredEffects = new LinkedHashSet<>();
+        if (match(USES)) {
+            consume(LEFT_BRACKET, "ARC-E1026", "usesには'['が必要です");
+            if (!check(RIGHT_BRACKET)) do {
+                Token effect = consumeName("ARC-E1027", "Effect名が必要です");
+                declaredEffects.add(effect.lexeme());
+            } while (match(COMMA));
+            consume(RIGHT_BRACKET, "ARC-E1028", "usesを閉じる']'が必要です");
+        }
         Block body = block();
-        return new FunctionDecl(name.lexeme(), parameters, body, join(begin.span(), body.span()));
+        return new FunctionDecl(name.lexeme(), parameters, effectful, declaredEffects, body, join(begin.span(), body.span()));
     }
 
     private Block block() {
@@ -161,7 +197,9 @@ public final class ArcParser {
         if (match(APPLY)) return applyStatement(previous());
         if (match(EMIT)) { Token begin = previous(); match(SIGNAL); return hostStatement(begin, "event.emit"); }
         if (match(WAIT)) return hostStatement(previous(), "time.wait");
-        if (match(ATOMIC, TRANSACTION, VISUAL, COMBAT)) return block();
+        if ((check(ATOMIC) || check(TRANSACTION) || check(VISUAL) || check(COMBAT)) && checkNext(LEFT_BRACE)) {
+            advance(); return block();
+        }
         if (match(RETURN)) return returnStatement(previous());
         if (match(BREAK)) { Token t = previous(); finishStatement(); return new BreakStmt(t.span()); }
         if (match(CONTINUE)) { Token t = previous(); finishStatement(); return new ContinueStmt(t.span()); }
@@ -339,7 +377,7 @@ public final class ArcParser {
         while (!atEnd()) {
             if (check(LESS)) { genericDepth++; advance(); continue; }
             if (check(GREATER) && genericDepth > 0) { genericDepth--; advance(); continue; }
-            if (genericDepth == 0 && check(LEFT_BRACE)) return;
+            if (genericDepth == 0 && (check(LEFT_BRACE) || check(USES))) return;
             advance();
         }
     }
@@ -612,7 +650,8 @@ public final class ArcParser {
         return switch (type) {
             case IDENT, CAST, WAIT, SIGNAL, EMIT, SPAWN, RAYCAST, APPLY, LIMIT, ORDER, BY, WHERE,
                  ASC, DESC, ENTER, DAMAGE, DEATH, PULSE, HIT, KILL, SPELL_END, PROJECTILE_IMPACT,
-                 STATE, TYPE, EFFECT, PERMISSION, FRAGMENTS, WITH, WITHIN, AT, TO -> true;
+                 STATE, TYPE, EFFECT, PERMISSION, FRAGMENTS, WITH, WITHIN, AT, TO,
+                 COMBAT, VISUAL, ATOMIC, TRANSACTION -> true;
             default -> false;
         };
     }

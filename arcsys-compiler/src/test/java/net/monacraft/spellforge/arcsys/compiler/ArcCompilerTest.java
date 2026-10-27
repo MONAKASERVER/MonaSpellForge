@@ -5,6 +5,18 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ArcCompilerTest {
+    @Test void enforcesPureAndDeclaredEffectFunctions() {
+        var pure = new ArcCompiler().compile("fn bad(target) { combat.damage(target, 2); } spell X { on cast { bad(target.nearest(8)); } }");
+        assertFalse(pure.valid());
+        assertTrue(pure.diagnostics().stream().anyMatch(d -> d.code().equals("ARC-E2040")), pure.diagnostics().toString());
+
+        var undeclared = new ArcCompiler().compile("effect fn bad(target) uses [MANA_CONSUME] { combat.damage(target, 2); } spell X { on cast { bad(target.nearest(8)); } }");
+        assertFalse(undeclared.valid());
+        assertTrue(undeclared.diagnostics().stream().anyMatch(d -> d.code().equals("ARC-E2041")));
+
+        var valid = new ArcCompiler().compile("effect fn apply_damage(target) uses [COMBAT_DAMAGE] { combat.damage(target, 2); } spell X { on cast { apply_damage(target.nearest(8)); } }");
+        assertTrue(valid.valid(), () -> valid.diagnostics().toString());
+    }
     @Test
     void emitsDeferredCleanupBeforeReturn() {
         String source = """

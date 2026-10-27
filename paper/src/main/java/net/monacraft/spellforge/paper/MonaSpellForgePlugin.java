@@ -56,6 +56,7 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
             Bukkit.getServicesManager().register(FragmentService.class,fragments,this,ServicePriority.Normal);
             Bukkit.getServicesManager().register(CircuitService.class,circuits,this,ServicePriority.Normal);
             Bukkit.getServicesManager().register(SpellService.class,spells,this,ServicePriority.Normal);
+            Bukkit.getServicesManager().register(ArcSkriptBridge.class,arcRuntime,this,ServicePriority.Normal);
             Bukkit.getPluginManager().registerEvents(editor,this);
             Bukkit.getPluginManager().registerEvents(stones,this);
             Bukkit.getPluginManager().registerEvents(fragmentStorage,this);

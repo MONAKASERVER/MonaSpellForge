@@ -51,6 +51,9 @@ public final class ArcCompiler {
         private Set<String> stateNames = Set.of();
         private Map<String, Persistence> statePersistence = Map.of();
         private Set<String> functionNames = Set.of();
+        private Map<String, FunctionDecl> functionDecls = Map.of();
+        private FunctionDecl currentFunction;
+        private List<Expr> currentPostconditions = List.of();
         private final Deque<LoopContext> loops = new ArrayDeque<>();
         private final List<List<Block>> deferredScopes = new ArrayList<>();
         private final List<PendingBranch> pendingBranches = new ArrayList<>();
@@ -64,12 +67,15 @@ public final class ArcCompiler {
             statePersistence = spell.states().stream().filter(value -> value.binding() == Binding.STATE && value.persistence() != null)
                     .collect(java.util.stream.Collectors.toUnmodifiableMap(VarDecl::name, VarDecl::persistence));
             functionNames = spell.functions().stream().map(FunctionDecl::name).collect(java.util.stream.Collectors.toUnmodifiableSet());
+            functionDecls = spell.functions().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(FunctionDecl::name, value -> value));
             for (HandlerDecl handler : spell.handlers()) {
                 String entry = "on:" + handler.trigger().name().toLowerCase(Locale.ROOT);
                 if (entries.putIfAbsent(entry, code.size()) != null) {
                     error("ARC-E2002", "同じイベントハンドラが重複しています: " + entry, handler, "ハンドラを1つに統合してください");
                     continue;
                 }
+                List<Integer> contractFailures = contractChecks(spell.preconditions());
+                currentPostconditions = spell.postconditions();
                 if (handler.argument() != null) { expression(handler.argument()); emit(STORE, "$event_arg", 0, 0); }
                 for (VarDecl state : spell.states()) {
                     expression(state.initializer());
@@ -84,14 +90,19 @@ public final class ArcCompiler {
                     emit(STORE, state.name(), 0, 0);
                 }
                 block(handler.body());
+                contractFailures.addAll(contractChecks(spell.postconditions()));
                 emit(PUSH_NONE); emit(RETURN);
+                emitContractFailure(contractFailures);
+                currentPostconditions = List.of();
             }
             for (FunctionDecl function : spell.functions()) {
                 String entry = "fn:" + function.name();
                 if (entries.putIfAbsent(entry, code.size()) != null) error("ARC-E2003", "関数名が重複しています: " + function.name(), function, "名前を変更してください");
+                currentFunction = function;
                 List<String> parameters = function.parameters();
                 for (int index = parameters.size() - 1; index >= 0; index--) emit(STORE, parameters.get(index), 0, 0);
                 block(function.body()); emit(PUSH_NONE); emit(RETURN);
+                currentFunction = null;
             }
             for (int index = 0; index < pendingBranches.size(); index++) compilePendingBranch(pendingBranches.get(index));
             emit(HALT);
@@ -135,7 +146,9 @@ public final class ArcCompiler {
                     String result = "$return" + synthetic++;
                     emit(STORE, result, 0, 0);
                     emitAllDeferred();
+                    List<Integer> contractFailures = contractChecks(currentPostconditions);
                     emit(LOAD, result, 0, 0); emit(RETURN);
+                    emitContractFailure(contractFailures);
                 }
                 case BreakStmt ignored -> {
                     if (compilingDeferred) error("ARC-E2013", "defer内ではbreakを使用できません", stmt, "defer本体からbreakを削除してください");
@@ -206,6 +219,7 @@ public final class ArcCompiler {
                     if (a.target() instanceof Variable v) {
                         expression(a.value()); emit(DUP); emit(STORE, v.name(), 0, 0);
                         if (stateNames.contains(v.name())) {
+                            validateCapability(a, "state.write", "state assignment");
                             emit(DUP); emit(PUSH_STRING, v.name(), 0, 0);
                             Persistence persistence = statePersistence.get(v.name());
                             emit(PUSH_STRING, persistence == null ? "SESSION" : persistence.scope().name(), 0, 0);
@@ -216,7 +230,14 @@ public final class ArcCompiler {
                     }
                     else error("ARC-E2020", "プロパティへの代入は許可されていません", a, "ローカル変数へ代入してください");
                 }
-                case Member m -> { expression(m.receiver()); emit(GET_MEMBER, m.name(), 0, 0); }
+                case Member m -> {
+                    String qualified = qualifiedName(m);
+                    ApiDefinition zeroArg = qualified == null ? null : APIS.get(qualified);
+                    if (zeroArg != null && zeroArg.minArgs() == 0 && zeroArg.maxArgs() == 0) {
+                        validateEffectCall(m, qualified, zeroArg);
+                        emit(CALL_HOST, qualified + "\u0000", 0, 0); capabilities.add(zeroArg.capability()); fuel += zeroArg.fuel();
+                    } else { expression(m.receiver()); emit(GET_MEMBER, m.name(), 0, 0); }
+                }
                 case Call c -> call(c);
                 case MatchExpr m -> matchExpression(m);
                 case VariantExpr v -> {
@@ -310,6 +331,16 @@ public final class ArcCompiler {
             }
             ApiDefinition definition = api == null ? null : APIS.get(api);
             if (definition == null && api != null && !api.contains(".") && functionNames.contains(api)) {
+                FunctionDecl target = functionDecls.get(api);
+                if (currentFunction != null && !currentFunction.effectful() && target != null && target.effectful())
+                    error("ARC-E2042", "pure fnからeffect fnは呼び出せません: " + api, call, "呼出元をeffect fnに変更してください");
+                if (currentFunction != null && currentFunction.effectful() && target != null && target.effectful()) {
+                    Set<String> caller = currentFunction.declaredEffects().stream().map(Builder::normalizeEffect).collect(java.util.stream.Collectors.toSet());
+                    Set<String> missing = target.declaredEffects().stream().map(Builder::normalizeEffect)
+                            .filter(effect -> !caller.contains(effect)).collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+                    if (!missing.isEmpty()) error("ARC-E2043", "呼び出すeffect fnのEffectがusesに不足しています: " + missing,
+                            call, "呼出元のusesへ不足Effectを追加してください");
+                }
                 if (call.arguments().stream().anyMatch(argument -> argument.name() != null))
                     error("ARC-E2032", "自作関数では名前付き引数を使用できません", call, "位置引数を使用してください");
                 for (CallArg argument : call.arguments()) expression(argument.value());
@@ -323,6 +354,7 @@ public final class ArcCompiler {
                 emit(PUSH_NONE);
                 return;
             }
+            validateEffectCall(call, api, definition);
             int count = call.arguments().size();
             if (count < definition.minArgs() || count > definition.maxArgs()) {
                 error("ARC-E2031", api + " の引数数が不正です", call, definition.minArgs() + "〜" + definition.maxArgs() + "個にしてください");
@@ -344,6 +376,43 @@ public final class ArcCompiler {
             if (RESULT_APIS.contains(api)) emit(COERCE_RESULT);
             capabilities.add(definition.capability());
             fuel += definition.fuel();
+        }
+
+        void validateEffectCall(net.monacraft.spellforge.arcsys.language.ArcAst.Node call, String api, ApiDefinition definition) {
+            if (currentFunction == null || isReadOnlyCapability(definition.capability())) return;
+            validateCapability(call, definition.capability(), api);
+        }
+
+        void validateCapability(net.monacraft.spellforge.arcsys.language.ArcAst.Node call, String capability, String operation) {
+            if (currentFunction == null) return;
+            if (!currentFunction.effectful()) {
+                error("ARC-E2040", "pure fnでは副作用APIを使用できません: " + operation, call,
+                        "effect fnとuses宣言を使用してください");
+                return;
+            }
+            Set<String> declared = currentFunction.declaredEffects().stream().map(Builder::normalizeEffect).collect(java.util.stream.Collectors.toSet());
+            if (!declared.contains(capability))
+                error("ARC-E2041", "usesに未宣言のEffectです: " + capability, call,
+                        "uses [" + capability.toUpperCase(Locale.ROOT).replace('.', '_') + "]を追加してください");
+        }
+
+        static boolean isReadOnlyCapability(String capability) {
+            return capability.equals("math") || capability.equals("random") || capability.startsWith("sense.")
+                    || capability.equals("mana.read") || capability.equals("state.read") || capability.equals("combat.inspect");
+        }
+
+        static String normalizeEffect(String value) { return value.toLowerCase(Locale.ROOT).replace('_', '.'); }
+
+        List<Integer> contractChecks(List<Expr> conditions) {
+            List<Integer> failures = new ArrayList<>();
+            for (Expr condition : conditions) { expression(condition); failures.add(jump(JUMP_IF_FALSE)); }
+            return failures;
+        }
+
+        void emitContractFailure(List<Integer> failures) {
+            if (failures.isEmpty()) return;
+            int failurePc = code.size(); failures.forEach(at -> patchTo(at, failurePc));
+            emit(PUSH_STRING, "CONTRACT_VIOLATION", 0, 0); emit(MAKE_VARIANT, "Err", 1, 0); emit(RETURN);
         }
 
         String qualifiedName(Expr expr) {

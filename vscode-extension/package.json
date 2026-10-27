@@ -31,6 +31,9 @@
       { "command": "arcsys.simulate", "title": "ArcSys: Run Simulation" },
       { "command": "arcsys.openGraph", "title": "ArcSys: Open Node Graph" },
       { "command": "arcsys.debug", "title": "ArcSys: Start Debugging" },
+      { "command": "arcsys.debugContinue", "title": "ArcSys: Continue Debugging" },
+      { "command": "arcsys.debugStep", "title": "ArcSys: Step Instruction" },
+      { "command": "arcsys.debugStop", "title": "ArcSys: Stop Debugging" },
       { "command": "arcsys.logs", "title": "ArcSys: View ArcVM Logs" },
       { "command": "arcsys.disconnect", "title": "ArcSys: Disconnect" }
     ],

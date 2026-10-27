@@ -89,8 +89,6 @@ Implemented and covered by automated tests:
 
 Feature-gated / not represented as complete:
 
-- Production combat-effect execution from ArcVM.
-- Breakpoint suspension and live variable watch (the alpha command runs server simulation only).
 - Bidirectional lossless conversion for every legacy 5×5 node.
 - Graphical VS Code node editor.
 - Cross-proxy verification and production load/fuzz certification.
@@ -100,4 +98,4 @@ Production remains on the stable 1.7 line until the release-candidate migration 
 
 ## Advanced language specification follow-up
 
-The advanced ArcSys and Minecraft API specifications are accepted, but are not yet production-complete. The development branch now includes dimension-aware types, local functions, match expressions, state/requirement metadata, expanded events, Skript-style control sugar, lexically scoped LIFO `defer` cleanup, runtime-tagged Option/Result values with payload pattern matching and `?` propagation, resumable wait/after continuations with bounded cooperative tick scheduling, deterministic parallel all/any and race groups with aggregate budgets, typed TTL/schema-version persistence connected to a Paper main-thread ArcVM host, and bounded live target/mana/damage/potion/particle effects. Fully propagated generic annotations, contracts, the allowlisted Skript bridge, remaining display/raycast/PDC effects and explicit WorldGuard/MythicMobs adapters remain release blockers. See `docs/advanced-spec-coverage.md`.
+The advanced ArcSys and Minecraft API specifications are accepted, but are not yet production-complete. The development branch now includes dimension-aware types, local/effect functions, global contract pre/postconditions, match expressions, state/requirement metadata, expanded events, Skript-style control sugar, lexically scoped LIFO `defer` cleanup, runtime-tagged Option/Result values with payload pattern matching and `?` propagation, resumable wait/after continuations with bounded cooperative tick scheduling, deterministic parallel all/any and race groups with aggregate budgets, typed TTL/schema-version persistence connected to a Paper main-thread ArcVM host, bounded live combat/Display/raycast/PDC effects, an allowlisted bidirectional Skript boundary, optional WorldGuard/MythicMobs adapters and a pause/step/watch bytecode debugger. Remaining blockers include named contract composition, source maps/profiler counters, virtual structures, full generic propagation, fuzz/proxy/rollback drills, sustained live load and actual Java/Bedrock client verification. See `docs/advanced-spec-coverage.md`.

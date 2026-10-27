@@ -4,7 +4,7 @@ main: net.monacraft.spellforge.paper.MonaSpellForgePlugin
 api-version: '1.21.11'
 authors: [MONAKA SERVER]
 description: 上級者向け魔術回路構築・強化・実行システム
-softdepend: [Vault, MythicMobs, floodgate, WorldGuard]
+softdepend: [Vault, MythicMobs, floodgate, WorldGuard, Skript]
 commands:
   msf:
     description: MonaSpellForge
@@ -24,3 +24,4 @@ permissions:
   monaspellforge.arcsys.debug: {default: op}
   monaspellforge.arcsys.deploy: {default: true}
   monaspellforge.arcsys.operator: {default: op}
+  monaspellforge.arcsys.signal: {default: op}

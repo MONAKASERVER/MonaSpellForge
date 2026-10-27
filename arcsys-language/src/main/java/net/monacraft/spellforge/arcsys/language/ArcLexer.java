@@ -170,7 +170,7 @@ public final class ArcLexer {
         values.put("after", Type.AFTER); values.put("atomic", Type.ATOMIC); values.put("transaction", Type.TRANSACTION);
         values.put("visual", Type.VISUAL); values.put("combat", Type.COMBAT); values.put("pub", Type.PUB); values.put("private", Type.PRIVATE);
         values.put("struct", Type.STRUCT); values.put("enum", Type.ENUM); values.put("type", Type.TYPE); values.put("trait", Type.TRAIT);
-        values.put("impl", Type.IMPL); values.put("effect", Type.EFFECT); values.put("uses", Type.USES); values.put("requires", Type.REQUIRES);
+        values.put("impl", Type.IMPL); values.put("effect", Type.EFFECT); values.put("uses", Type.USES); values.put("contract", Type.CONTRACT); values.put("requires", Type.REQUIRES);
         values.put("fragments", Type.FRAGMENTS); values.put("permission", Type.PERMISSION); values.put("ensures", Type.ENSURES);
         values.put("persist", Type.PERSIST); values.put("select", Type.SELECT); values.put("where", Type.WHERE); values.put("order", Type.ORDER);
         values.put("by", Type.BY); values.put("limit", Type.LIMIT); values.put("asc", Type.ASC); values.put("desc", Type.DESC);

@@ -8,42 +8,52 @@ import net.monacraft.spellforge.arcsys.compiler.ArcCompiler;
 import net.monacraft.spellforge.arcsys.vm.ArcScheduler;
 import net.monacraft.spellforge.arcsys.vm.ArcVm;
 import org.bukkit.*;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Monster;
-import org.bukkit.entity.Player;
+import org.bukkit.block.Block;
+import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.util.RayTraceResult;
 
 import java.util.*;
 
 /** Paper-authoritative ArcVM activation and effect application on the main server thread. */
-final class ArcRuntimeService implements Listener, AutoCloseable {
+final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridge {
     private final Plugin plugin;
     private final SpellDatabase database;
     private final FragmentService fragments;
     private final ManaService mana;
     private final ArcCompiler compiler = new ArcCompiler();
     private final ArcScheduler scheduler;
+    private final ArcEffectContract effectContract;
+    private final ArcProtectionAdapters protections = new ArcProtectionAdapters();
     private final Map<ArcScheduler.TaskId, UUID> owners = new HashMap<>();
     private final Map<StateKey, Object> sessionState = new HashMap<>();
     private final double maxDamage;
     private final double maxRange;
     private final int maxPotionTicks;
+    private final int maxDisplayTicks;
+    private final Set<String> skriptSignals;
     private long tick;
+    private final Map<UUID, Integer> inboundSignalsThisTick = new HashMap<>();
 
     ArcRuntimeService(Plugin plugin, SpellDatabase database, FragmentService fragments, ManaService mana) {
         this.plugin = plugin; this.database = database; this.fragments = fragments; this.mana = mana;
         this.scheduler = new ArcScheduler(new ArcVm(),
                 plugin.getConfig().getInt("arc-runtime.max-active-tasks", 1024),
                 plugin.getConfig().getInt("arc-runtime.max-resumes-per-tick", 128));
+        this.effectContract = new ArcEffectContract(plugin.getConfig());
         this.maxDamage = plugin.getConfig().getDouble("arc-runtime.max-damage-per-effect", 200.0);
         this.maxRange = plugin.getConfig().getDouble("arc-runtime.max-target-range", 64.0);
         this.maxPotionTicks = plugin.getConfig().getInt("arc-runtime.max-potion-duration-ticks", 600);
+        this.maxDisplayTicks = plugin.getConfig().getInt("arc-runtime.max-display-duration-ticks", 200);
+        this.skriptSignals = plugin.getConfig().getStringList("arc-runtime.skript-allowlist").stream()
+                .map(value -> value.toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     CastOutcome cast(Player player, UUID spellId) {
@@ -56,7 +66,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
         if (requirementFailure != null) return new CastOutcome(false, "REQUIREMENT", requirementFailure, null);
         if (!compiled.program().entryPoints().containsKey("on:cast")) return new CastOutcome(false, "NO_CAST_HANDLER", "on castがありません", null);
 
-        RuntimeHost host = new RuntimeHost(player, spellId);
+        RuntimeHost host = new RuntimeHost(player, spellId, compiled.program().capabilities());
         RuntimeListener listener = new RuntimeListener(player, host);
         try {
             ArcScheduler.TaskId id = scheduler.start(compiled.program(), "on:cast",
@@ -70,11 +80,42 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
         }
     }
 
-    void tick() { tick++; scheduler.tick(tick); }
+    void tick() { tick++; inboundSignalsThisTick.clear(); scheduler.tick(tick); }
     int activeTasks() { return scheduler.activeTasks(); }
 
     int cancel(UUID owner, String reason) {
         return scheduler.cancelWhere(id -> owner.equals(owners.get(id)), reason);
+    }
+
+    @Override public boolean isAllowed(String signal) {
+        return signal != null && skriptSignals.contains(signal.toLowerCase(Locale.ROOT));
+    }
+
+    @Override public int emitSignal(Player player, String signal, Object payload) {
+        if (!Bukkit.isPrimaryThread() || player == null || !player.isOnline() || !isAllowed(signal)) return 0;
+        int used = inboundSignalsThisTick.merge(player.getUniqueId(), 1, Integer::sum);
+        if (used > 4) return 0;
+        Object safePayload = boundedBridgeValue(payload);
+        int started = 0;
+        for (var summary : database.arcSpells(player.getUniqueId())) {
+            if (!summary.enabled() || started >= 8) continue;
+            var revision = database.arcSpell(summary.spellId(), player.getUniqueId()).orElse(null);
+            if (revision == null) continue;
+            var compiled = compiler.compile(revision.source());
+            if (!compiled.valid() || !compiled.program().entryPoints().containsKey("on:signal")) continue;
+            if (requirementFailure(player, compiled.program().requirements()) != null) continue;
+            RuntimeHost host = new RuntimeHost(player, revision.spellId(), compiled.program().capabilities());
+            RuntimeListener listener = new RuntimeListener(player, host);
+            try {
+                ArcScheduler.TaskId id = scheduler.start(compiled.program(), "on:signal", Map.of(
+                        "caster", entityRef(player), "signal", signal.toLowerCase(Locale.ROOT), "payload", safePayload),
+                        ArcVm.Limits.production(), host, tick, listener);
+                owners.put(id, player.getUniqueId()); if (!scheduler.isActive(id)) owners.remove(id); started++;
+            } catch (RuntimeException error) {
+                plugin.getLogger().warning("ArcSys inbound signal rejected for " + player.getName());
+            }
+        }
+        return started;
     }
 
     @EventHandler public void onQuit(PlayerQuitEvent event) {
@@ -83,7 +124,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
     }
 
     @Override public void close() {
-        scheduler.cancelWhere(id -> true, "plugin-disable"); owners.clear(); sessionState.clear();
+        scheduler.cancelWhere(id -> true, "plugin-disable"); owners.clear(); sessionState.clear(); inboundSignalsThisTick.clear();
     }
 
     private String requirementFailure(Player player, Set<String> requirements) {
@@ -117,6 +158,14 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
         public void cancelled(ArcScheduler.TaskId id, String reason) { owners.remove(id); }
         private void applyNew(ArcVm.Result result) {
             List<ArcVm.EffectRequest> effects = result.effects();
+            List<ArcVm.EffectRequest> segment = effects.subList(applied, effects.size());
+            ArcEffectContract.Decision decision = effectContract.validate(segment, host.capabilities);
+            if (!decision.allowed()) {
+                host.revoked = true;
+                if (player.isOnline()) player.sendMessage(Component.text("ArcSys契約違反: " + decision.code(), NamedTextColor.RED));
+                applied = effects.size();
+                return;
+            }
             for (int i = applied; i < effects.size(); i++) {
                 try { applyEffect(player, host, effects.get(i)); }
                 catch (RuntimeException error) { plugin.getLogger().warning("ArcSys effect rejected: " + effects.get(i).type()); }
@@ -127,30 +176,40 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
 
     private final class RuntimeHost implements ArcVm.Host {
         private final Player player; private final UUID spellId;
+        private final Set<String> capabilities;
+        private final SplittableRandom random;
         private final Map<StateKey, Object> pendingState = new HashMap<>();
         private double reservedMana;
-        private RuntimeHost(Player player, UUID spellId) { this.player = player; this.spellId = spellId; }
+        private boolean revoked;
+        private RuntimeHost(Player player, UUID spellId, Set<String> capabilities) {
+            this.player = player; this.spellId = spellId; this.capabilities = Set.copyOf(capabilities);
+            this.random = new SplittableRandom(player.getUniqueId().getMostSignificantBits() ^ spellId.getLeastSignificantBits() ^ tick);
+        }
 
         public Object invoke(String api, List<Object> args, List<String> names, ArcVm.Execution execution) {
             if (!player.isOnline()) return ArcBytecode.Variant.of("Err", "PLAYER_OFFLINE");
+            if (revoked) return ArcBytecode.Variant.of("Err", "CONTRACT_REVOKED");
             return switch (api) {
                 case "mobs.hostile", "entities.hostile" -> hostile(args, names);
                 case "target.nearest" -> hostile(args, names).stream().findFirst()
                         .<Object>map(value -> ArcBytecode.Variant.of("Some", value)).orElseGet(() -> ArcBytecode.Variant.empty("None"));
-                case "combat.can_attack" -> living(args.isEmpty() ? null : args.getFirst()) != null;
+                case "combat.can_attack" -> canAttack(args.isEmpty() ? null : args.getFirst());
                 case "entity.distance" -> distance(args);
+                case "raycast.entities" -> raycastEntity(args);
+                case "raycast.blocks", "blocks.query" -> raycastBlock(args);
                 case "mana.current" -> mana.current(player) - reservedMana;
                 case "mana.consume" -> reserveMana(args, execution);
-                case "combat.damage", "combat.apply", "world.particle", "particles.spiral", "particles.ring", "particles.sphere" ->
+                case "combat.damage", "combat.apply", "world.particle", "particles.spiral", "particles.ring", "particles.sphere",
+                     "display.magic_circle", "display.item", "display.text", "pdc.set", "skript.emit", "event.emit" ->
                         request(api, args, execution);
+                case "pdc.get" -> pdcGet(args);
                 case "state.get" -> stateGet(args);
                 case "state.set" -> stateSet(args, execution);
-                case "random.chance" -> Math.random() < number(args.getFirst(), 0, 1);
+                case "random.chance" -> random.nextDouble() < number(args.getFirst(), 0, 1);
                 case "math.clamp" -> Math.max(number(args.get(1), -Double.MAX_VALUE, Double.MAX_VALUE),
                         Math.min(number(args.get(2), -Double.MAX_VALUE, Double.MAX_VALUE), number(args.getFirst(), -Double.MAX_VALUE, Double.MAX_VALUE)));
-                case "spell.cast", "spell.effect", "display.magic_circle", "display.item", "display.text", "virtual_structure.show",
-                     "raycast.entities", "raycast.blocks", "blocks.query", "items.inspect", "pdc.get", "pdc.set", "time.after",
-                     "event.cancel", "skript.emit", "event.emit" -> ArcBytecode.Variant.of("Err", "CAPABILITY_NOT_AVAILABLE");
+                case "spell.cast", "spell.effect", "virtual_structure.show", "items.inspect", "time.after", "event.cancel" ->
+                        ArcBytecode.Variant.of("Err", "CAPABILITY_NOT_AVAILABLE");
                 default -> ArcBytecode.Variant.of("Err", "UNKNOWN_API");
             };
         }
@@ -165,7 +224,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
             return player.getWorld().getNearbyLivingEntities(player.getLocation(), radius).stream()
                     .filter(entity -> entity instanceof Monster && entity.isValid() && !entity.isDead())
                     .sorted(Comparator.comparingDouble(entity -> entity.getLocation().distanceSquared(player.getLocation())))
-                    .limit(limit).map(ArcRuntimeService::entityRef).map(value -> (Object) value).toList();
+                    .limit(limit).map(ArcRuntimeService.this::entityRef).map(value -> (Object) value).toList();
         }
 
         private Object reserveMana(List<Object> args, ArcVm.Execution execution) {
@@ -177,6 +236,38 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
 
         private Object request(String api, List<Object> args, ArcVm.Execution execution) {
             execution.request(new ArcVm.EffectRequest(api, Map.of("arguments", List.copyOf(args)))); return true;
+        }
+
+        private boolean canAttack(Object value) {
+            LivingEntity target = living(value);
+            return target != null && target != player && target.isValid() && !target.isDead()
+                    && target.getWorld() == player.getWorld()
+                    && target.getLocation().distanceSquared(player.getLocation()) <= maxRange * maxRange;
+        }
+
+        private Object raycastEntity(List<Object> args) {
+            double range = args.isEmpty() ? 16 : number(args.getFirst(), 1, maxRange);
+            RayTraceResult hit = player.getWorld().rayTraceEntities(player.getEyeLocation(), player.getEyeLocation().getDirection(),
+                    range, 0.35, entity -> entity instanceof LivingEntity && entity != player);
+            if (hit == null || !(hit.getHitEntity() instanceof LivingEntity entity)) return ArcBytecode.Variant.empty("None");
+            return ArcBytecode.Variant.of("Some", entityRef(entity));
+        }
+
+        private Object raycastBlock(List<Object> args) {
+            double range = args.isEmpty() ? 16 : number(args.getFirst(), 1, maxRange);
+            RayTraceResult hit = player.getWorld().rayTraceBlocks(player.getEyeLocation(), player.getEyeLocation().getDirection(), range);
+            Block block = hit == null ? null : hit.getHitBlock();
+            if (block == null) return ArcBytecode.Variant.empty("None");
+            return ArcBytecode.Variant.of("Some", Map.of("world", block.getWorld().getUID().toString(), "x", (long) block.getX(),
+                    "y", (long) block.getY(), "z", (long) block.getZ(), "type", block.getType().name()));
+        }
+
+        private Object pdcGet(List<Object> args) {
+            if (args.isEmpty()) return ArcBytecode.Variant.of("Err", "PDC_KEY_REQUIRED");
+            NamespacedKey key = pdcKey(String.valueOf(args.getFirst()));
+            if (key == null) return ArcBytecode.Variant.of("Err", "PDC_KEY_DENIED");
+            String value = player.getPersistentDataContainer().get(key, PersistentDataType.STRING);
+            return value == null ? ArcBytecode.Variant.empty("None") : ArcBytecode.Variant.of("Some", value);
         }
 
         private Object stateGet(List<Object> args) {
@@ -219,6 +310,10 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
             case "combat.damage" -> applyDamage(player, arguments(effect));
             case "combat.apply" -> applyPotion(arguments(effect));
             case "world.particle", "particles.spiral", "particles.ring", "particles.sphere" -> applyParticle(player, arguments(effect));
+            case "display.magic_circle", "display.item", "display.text" -> applyDisplay(player, effect.type(), arguments(effect));
+            case "pdc.set" -> applyPdc(player, arguments(effect));
+            case "skript.emit" -> applySkript(player, arguments(effect));
+            case "event.emit" -> applyLocalSignal(player, arguments(effect));
             default -> { }
         }
     }
@@ -251,6 +346,88 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
         player.getWorld().spawnParticle(particle, player.getLocation().add(0, 1, 0), count, 0.5, 0.5, 0.5, 0.02);
     }
 
+    private void applyDisplay(Player player, String type, List<Object> args) {
+        Location location = displayLocation(player, args);
+        if (!protections.canBuild(player, location)) throw new IllegalArgumentException("protected");
+        int duration = displayDuration(args);
+        Display display;
+        if (type.equals("display.text")) {
+            String text = args.isEmpty() ? "ArcSys" : String.valueOf(args.getFirst());
+            if (text.length() > 128) text = text.substring(0, 128);
+            String finalText = text;
+            display = location.getWorld().spawn(location, TextDisplay.class, entity -> {
+                entity.text(Component.text(finalText)); entity.setBillboard(Display.Billboard.CENTER); entity.setSeeThrough(true);
+            });
+        } else if (type.equals("display.item")) {
+            Material material = material(args.isEmpty() ? "AMETHYST_SHARD" : String.valueOf(args.getFirst()), Material.AMETHYST_SHARD);
+            display = location.getWorld().spawn(location, ItemDisplay.class, entity -> entity.setItemStack(new ItemStack(material)));
+        } else {
+            Material material = material(args.isEmpty() ? "GLOWSTONE" : String.valueOf(args.getFirst()), Material.GLOWSTONE);
+            display = location.getWorld().spawn(location, BlockDisplay.class, entity -> entity.setBlock(material.createBlockData()));
+        }
+        display.addScoreboardTag("monaspellforge:temporary");
+        Bukkit.getScheduler().runTaskLater(plugin, display::remove, duration);
+    }
+
+    private void applyPdc(Player player, List<Object> args) {
+        if (args.size() < 2) throw new IllegalArgumentException("pdc args");
+        NamespacedKey key = pdcKey(String.valueOf(args.getFirst()));
+        if (key == null) throw new IllegalArgumentException("pdc key");
+        String value = String.valueOf(args.get(1));
+        if (value.length() > 512) throw new IllegalArgumentException("pdc value");
+        player.getPersistentDataContainer().set(key, PersistentDataType.STRING, value);
+    }
+
+    private void applySkript(Player player, List<Object> args) {
+        if (args.isEmpty()) throw new IllegalArgumentException("signal");
+        String signal = String.valueOf(args.getFirst()).toLowerCase(Locale.ROOT);
+        if (!skriptSignals.contains(signal)) throw new IllegalArgumentException("signal denied");
+        Object payload = args.size() > 1 ? args.get(1) : "";
+        Bukkit.getPluginManager().callEvent(new ArcSkriptBridgeEvent(player, signal,
+                Map.of("value", boundedBridgeValue(payload), "source", "ArcSys")));
+    }
+
+    private void applyLocalSignal(Player player, List<Object> args) {
+        if (args.isEmpty()) return;
+        String signal = safeSignal(String.valueOf(args.getFirst()));
+        if (!isAllowed(signal)) throw new IllegalArgumentException("signal denied");
+        emitSignal(player, signal, "");
+    }
+
+    private Location displayLocation(Player player, List<Object> args) {
+        for (Object arg : args) {
+            LivingEntity target = living(arg);
+            if (target != null && target.getWorld() == player.getWorld()
+                    && target.getLocation().distanceSquared(player.getLocation()) <= maxRange * maxRange)
+                return target.getLocation().add(0, 1, 0);
+        }
+        return player.getLocation().add(player.getLocation().getDirection().multiply(2)).add(0, 1, 0);
+    }
+
+    private int displayDuration(List<Object> args) {
+        for (int i = args.size() - 1; i >= 0; i--) if (args.get(i) instanceof Number n)
+            return Math.min(maxDisplayTicks, Math.max(1, n.intValue()));
+        return Math.min(maxDisplayTicks, 60);
+    }
+
+    private NamespacedKey pdcKey(String input) {
+        String safe = input.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9._-]", "");
+        if (safe.isBlank() || safe.length() > 48 || !safe.startsWith("user_")) return null;
+        return new NamespacedKey(plugin, "arc_" + safe);
+    }
+
+    private static Object boundedBridgeValue(Object value) {
+        if (value instanceof Boolean || value instanceof Number) return value;
+        String text = String.valueOf(value); return text.length() <= 256 ? text : text.substring(0, 256);
+    }
+    private static String safeSignal(String value) {
+        String safe = value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9._-]", "");
+        return safe.length() <= 64 ? safe : safe.substring(0, 64);
+    }
+    private static Material material(String value, Material fallback) {
+        Material material = Material.matchMaterial(value); return material != null && material.isItem() ? material : fallback;
+    }
+
     @SuppressWarnings("unchecked") private static List<Object> arguments(ArcVm.EffectRequest effect) {
         Object value = effect.parameters().get("arguments"); return value instanceof List<?> list ? (List<Object>) list : List.of();
     }
@@ -259,9 +436,13 @@ final class ArcRuntimeService implements Listener, AutoCloseable {
         try { Entity entity = Bukkit.getEntity(UUID.fromString(String.valueOf(map.get("uuid")))); return entity instanceof LivingEntity living ? living : null; }
         catch (IllegalArgumentException ignored) { return null; }
     }
-    private static Map<String, Object> entityRef(LivingEntity entity) {
-        return Map.of("uuid", entity.getUniqueId().toString(), "type", entity.getType().name(), "name", entity.getName(),
-                "hp_ratio", entity.getHealth() / Math.max(1.0, entity.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getValue()));
+    private Map<String, Object> entityRef(LivingEntity entity) {
+        var attribute = entity.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("uuid", entity.getUniqueId().toString()); result.put("type", entity.getType().name()); result.put("name", entity.getName());
+        result.put("hp_ratio", entity.getHealth() / Math.max(1.0, attribute == null ? entity.getHealth() : attribute.getValue()));
+        String mythicType = protections.mythicType(entity); if (!mythicType.isBlank()) result.put("mythic_type", mythicType);
+        return Map.copyOf(result);
     }
     private static double namedNumber(List<Object> args, List<String> names, String name, double fallback) {
         int index = names.indexOf(name); if (index < 0 || index >= args.size() || !(args.get(index) instanceof Number number)) return fallback;

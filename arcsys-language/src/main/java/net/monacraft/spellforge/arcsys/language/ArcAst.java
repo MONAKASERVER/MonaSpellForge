@@ -19,18 +19,29 @@ public final class ArcAst {
 
     public record SpellDecl(String name, Map<String, Integer> requiredFragments, List<String> requiredPermissions,
                             List<VarDecl> states, List<HandlerDecl> handlers,
-                            List<FunctionDecl> functions, Span span) implements Node {
+                            List<FunctionDecl> functions, List<Expr> preconditions, List<Expr> postconditions,
+                            Span span) implements Node {
         public SpellDecl {
             requiredFragments = Map.copyOf(requiredFragments);
             requiredPermissions = List.copyOf(requiredPermissions);
             states = List.copyOf(states);
             handlers = List.copyOf(handlers);
             functions = List.copyOf(functions);
+            preconditions = List.copyOf(preconditions);
+            postconditions = List.copyOf(postconditions);
+        }
+        public SpellDecl(String name, Map<String, Integer> requiredFragments, List<String> requiredPermissions,
+                         List<VarDecl> states, List<HandlerDecl> handlers, List<FunctionDecl> functions, Span span) {
+            this(name, requiredFragments, requiredPermissions, states, handlers, functions, List.of(), List.of(), span);
         }
     }
 
-    public record FunctionDecl(String name, List<String> parameters, Block body, Span span) implements Node {
-        public FunctionDecl { parameters = List.copyOf(parameters); }
+    public record FunctionDecl(String name, List<String> parameters, boolean effectful,
+                               java.util.Set<String> declaredEffects, Block body, Span span) implements Node {
+        public FunctionDecl { parameters = List.copyOf(parameters); declaredEffects = java.util.Set.copyOf(declaredEffects); }
+        public FunctionDecl(String name, List<String> parameters, Block body, Span span) {
+            this(name, parameters, false, java.util.Set.of(), body, span);
+        }
     }
 
     public enum Trigger {

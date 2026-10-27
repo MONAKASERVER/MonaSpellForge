@@ -9,6 +9,7 @@ let client: LanguageClient | undefined;
 let bridge: FabricBridge | undefined;
 const output = vscode.window.createOutputChannel('ArcSys / ArcVM');
 const spellMetadata = new Map<string, { spellId: string; revision: number }>();
+let debugSessionId: string | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const serverModule = context.asAbsolutePath(path.join('out', 'server.js'));
@@ -33,7 +34,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('arcsys.compile', () => sourceRequest('compile'));
   register('arcsys.deploy', () => sourceRequest('deploy'));
   register('arcsys.simulate', () => sourceRequest('simulate'));
-  register('arcsys.debug', () => sourceRequest('debugStart'));
+  register('arcsys.debug', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'arcsys') throw new Error('ArcSys (.arc) ファイルを開いてください');
+    const watchesRaw = await vscode.window.showInputBox({ title: 'ArcSys Watch', prompt: '監視する変数名（カンマ区切り、省略可）' });
+    const result = await requireBridge().request('debugStart', {
+      source: editor.document.getText(), watches: (watchesRaw ?? '').split(',').map(v => v.trim()).filter(Boolean), breakpoints: []
+    }) as { debugSessionId?: string };
+    debugSessionId = result.debugSessionId; showDebugResult('start', result);
+  });
+  register('arcsys.debugContinue', () => continueDebug('continue'));
+  register('arcsys.debugStep', () => continueDebug('step'));
+  register('arcsys.debugStop', async () => {
+    if (!debugSessionId) throw new Error('実行中のArcSysデバッグセッションがありません');
+    const result = await requireBridge().request('debugStop', { debugSessionId });
+    showDebugResult('stop', result); debugSessionId = undefined;
+  });
   register('arcsys.openGraph', () => sourceRequest('nodeGraph'));
   register('arcsys.logs', async () => { const result = await requireBridge().request('logs', {}); output.appendLine(JSON.stringify(result, null, 2)); output.show(true); });
   register('arcsys.openSpell', async () => {
@@ -60,6 +76,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.showInformationMessage(`ArcSys ${type} 完了`);
     if (type === 'deploy') await refreshStudio(studio);
   }
+
+  async function continueDebug(mode: 'continue' | 'step'): Promise<void> {
+    if (!debugSessionId) throw new Error('ArcSys: Start Debuggingを先に実行してください');
+    const result = await requireBridge().request('debugContinue', { debugSessionId, mode }) as { status?: string };
+    showDebugResult(mode, result);
+    if (result.status === 'COMPLETED' || result.status === 'TRAPPED' || result.status === 'STOPPED') debugSessionId = undefined;
+  }
 }
 
 function requireBridge(): FabricBridge { if (!bridge?.connected) throw new Error('先に ArcSys: Connect to Minecraft を実行してください'); return bridge; }
@@ -67,6 +90,11 @@ async function refreshStudio(studio: StudioProvider): Promise<void> { studio.upd
 async function run(label: string, action: () => Promise<string>): Promise<void> {
   try { vscode.window.showInformationMessage(await action()); }
   catch (error) { const message = error instanceof Error ? error.message : String(error); output.appendLine(`${label}: ${message}`); vscode.window.showErrorMessage(`ArcSys ${label}失敗: ${message}`); }
+}
+
+function showDebugResult(action: string, result: unknown): void {
+  output.appendLine(`[${new Date().toISOString()}] debug:${action}\n${JSON.stringify(result, null, 2)}`);
+  output.show(true);
 }
 
 export async function deactivate(): Promise<void> { bridge?.disconnect(); await client?.stop(); }
