@@ -40,14 +40,14 @@
 
 ## 本番導入済み
 
-- Paper版 v1.4.0をメインサーバーへ導入し、69欠片登録・DB migration v4・構成連動パーティクル初期化・Paper起動完了を確認
-- Fabric/Paper v1.4.0をGitHub Releaseへ公開し、GitHub Actions成功を確認
+- Paper版 v1.5.1をメインサーバーへ導入し、69欠片登録・DB・魔術有効/無効切替・実行負荷上限512・Paper起動完了を確認
+- Fabric/Paper v1.5.1をGitHub Releaseへ公開し、GitHub Actions成功を確認
 - 既存SQLiteの整合性確認済み、旧JAR・設定・DBのロールバックバックアップ取得済み
 
 ## 実機確認が必要
 
 - Modなし/統合版クライアントでの魔術一覧GUI操作
-- Fabric 26.1.2 v1.4.0での魔術一覧画面とplugin message往復
+- Fabric 26.1.2 v1.5.1での魔術一覧画面とplugin message往復
 - 実プレイヤーによる全属性・全形状・複合Modifierの見た目確認
 - MythicMobsボス、保護領域、PvP規則との組み合わせ
 - 長時間・多人数負荷試験
