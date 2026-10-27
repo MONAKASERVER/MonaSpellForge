@@ -427,8 +427,9 @@ public final class SpellForgeScreen extends Screen {
     private void drawHoverDetails(GuiGraphicsExtractor graphics, Rect canvas, Rect paletteArea, int mouseX, int mouseY) {
         if (contextMenu != null || draggingFragment != null || draggingPort != null) return;
         OwnedFragment paletteHover = paletteAt(mouseX, mouseY);
-        CircuitNode nodeHover = nodeAt(mouseX, mouseY, layoutNodes(canvas));
-        PortHit portHover = portAt(mouseX, mouseY, layoutNodes(canvas));
+        Map<UUID, NodeBox> boxes = layoutNodes(canvas);
+        CircuitNode nodeHover = nodeAt(mouseX, mouseY, boxes);
+        PortHit portHover = portAt(mouseX, mouseY, boxes);
         if (portHover != null) {
             List<String> lines = List.of(
                     "端子: " + portHover.port.id(),
@@ -440,6 +441,12 @@ public final class SpellForgeScreen extends Screen {
         }
         if (nodeHover != null) {
             drawFragmentTooltip(graphics, mouseX, mouseY, nodeHover.fragmentId(), nodeHover.level(), issueFor(nodeHover.nodeId()));
+        } else if (canvas.contains(mouseX, mouseY)) {
+            CircuitEdge edgeHover = edgeAt(mouseX, mouseY, boxes);
+            if (edgeHover != null) {
+                drawTooltip(graphics, mouseX, mouseY, "魔術配線",
+                        List.of("右クリック: この配線を切断"), 0xFF6DB7F0);
+            }
         } else if (paletteHover != null) {
             drawFragmentTooltip(graphics, mouseX, mouseY, paletteHover.fragmentId(), paletteHover.level(), null);
         }
@@ -517,6 +524,13 @@ public final class SpellForgeScreen extends Screen {
         }
         if (button == 1) {
             CircuitNode node = nodeAt(mouseX, mouseY, boxes);
+            if (node == null && canvas.contains(mouseX, mouseY)) {
+                CircuitEdge edge = edgeAt(mouseX, mouseY, boxes);
+                if (edge != null) {
+                    disconnectEdge(edge.edgeId());
+                    return true;
+                }
+            }
             contextMenu = new ContextMenu(mouseX, mouseY, node == null ? null : node.nodeId());
             return true;
         }
@@ -710,6 +724,18 @@ public final class SpellForgeScreen extends Screen {
         edges.add(new CircuitEdge(UUID.randomUUID(), sourceNode, sourcePort.id(), targetNode, targetPort.id()));
         circuit = circuit.withContent(circuit.nodes(), edges);
         refreshValidation();
+    }
+
+    private void disconnectEdge(UUID edgeId) {
+        if (circuit.edges().stream().noneMatch(edge -> edge.edgeId().equals(edgeId))) return;
+        saveHistory();
+        List<CircuitEdge> edges = circuit.edges().stream()
+                .filter(edge -> !edge.edgeId().equals(edgeId))
+                .toList();
+        circuit = circuit.withContent(circuit.nodes(), edges);
+        refreshValidation();
+        status = Component.literal("配線を切断しました");
+        statusColor = CONNECTED;
     }
 
     private boolean handleContextClick(int mouseX, int mouseY) {
@@ -971,6 +997,56 @@ public final class SpellForgeScreen extends Screen {
             } catch (Exception ignored) { }
         }
         return result;
+    }
+
+    private CircuitEdge edgeAt(int mouseX, int mouseY, Map<UUID, NodeBox> boxes) {
+        List<CircuitEdge> edges = circuit.edges();
+        for (int index = edges.size() - 1; index >= 0; index--) {
+            CircuitEdge edge = edges.get(index);
+            CircuitNode sourceNode = node(edge.sourceNodeId());
+            CircuitNode targetNode = node(edge.targetNodeId());
+            if (sourceNode == null || targetNode == null) continue;
+            PortHit source = port(sourceNode, boxes.get(sourceNode.nodeId()), edge.sourcePortId());
+            PortHit target = port(targetNode, boxes.get(targetNode.nodeId()), edge.targetPortId());
+            if (source != null && target != null && curveContains(source.x, source.y, target.x, target.y, mouseX, mouseY)) {
+                return edge;
+            }
+        }
+        return null;
+    }
+
+    private static boolean curveContains(int startX, int startY, int endX, int endY, int mouseX, int mouseY) {
+        double direction = endX >= startX ? 1.0 : -1.0;
+        double bend = Math.max(24, Math.abs(endX - startX) * 0.45) * direction;
+        double previousX = startX;
+        double previousY = startY;
+        for (int step = 1; step <= 36; step++) {
+            double t = step / 36.0;
+            double inverse = 1.0 - t;
+            double nextX = inverse * inverse * inverse * startX
+                    + 3 * inverse * inverse * t * (startX + bend)
+                    + 3 * inverse * t * t * (endX - bend)
+                    + t * t * t * endX;
+            double nextY = inverse * inverse * inverse * startY
+                    + 3 * inverse * inverse * t * startY
+                    + 3 * inverse * t * t * endY
+                    + t * t * t * endY;
+            if (distanceToSegment(mouseX, mouseY, previousX, previousY, nextX, nextY) <= 5.0) return true;
+            previousX = nextX;
+            previousY = nextY;
+        }
+        return false;
+    }
+
+    private static double distanceToSegment(double pointX, double pointY, double startX, double startY,
+                                            double endX, double endY) {
+        double deltaX = endX - startX;
+        double deltaY = endY - startY;
+        double lengthSquared = deltaX * deltaX + deltaY * deltaY;
+        if (lengthSquared == 0) return Math.hypot(pointX - startX, pointY - startY);
+        double projection = ((pointX - startX) * deltaX + (pointY - startY) * deltaY) / lengthSquared;
+        projection = clamp(projection, 0.0, 1.0);
+        return Math.hypot(pointX - (startX + projection * deltaX), pointY - (startY + projection * deltaY));
     }
 
     private ValidationIssue issueFor(UUID nodeId) {

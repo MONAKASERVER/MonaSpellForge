@@ -13,8 +13,8 @@ $env:JAVA_HOME='C:\path\to\jdk-25'
 
 成果物:
 
-- `paper/build/libs/MonaSpellForge-Paper-1.6.0.jar`
-- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.6.0.jar`
+- `paper/build/libs/MonaSpellForge-Paper-1.6.1.jar`
+- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.6.1.jar`
 
 Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアントの`mods`へ配置します。ModがないJava版・統合版は54スロットのサーバーGUIを利用できます。
 
@@ -22,7 +22,7 @@ Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアント
 
 [GitHub Releases](https://github.com/MONAKASERVER/MonaSpellForge/releases)から、利用中のMinecraftバージョンに対応する`MonaSpellForge-Fabric-*.jar`をダウンロードし、クライアントの`mods`フォルダへ配置してください。
 
-v1.6.0の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
+v1.6.1の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
 
 Java版・統合版共通のWebエディターは、ゲーム内で `/msf web` を実行して発行される6桁コードで連携します。コードは10分間・1回限り有効で、保存処理はPaper側でも所有権、所持ノード、Revision、回路上限を再検証します。
 
@@ -31,6 +31,7 @@ Java版・統合版共通のWebエディターは、ゲーム内で `/msf web` �
 - 右側の「所持ノード」からキャンバスへ左ドラッグ: 欠片を配置
 - 配置済みノードを左ドラッグ: 5×5の好きなマスへ移動
 - 色付きポートを左ドラッグ: 型が一致するポートへ自由配線
+- 配線を右クリック: その配線だけを切断
 - ノードまたはキャンバスを右クリック: 追加・複製・しまうメニュー
 - マウスホイール: ズームイン・アウト
 - 空白部分を左ドラッグ、または中クリックドラッグ: キャンバス全体を移動
