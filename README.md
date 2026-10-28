@@ -2,6 +2,8 @@
 
 ArcSysの包括的な日本語ドキュメント: [ArcSys 2.0 完全Wiki](docs/ARCSYS_COMPLETE_WIKI_JA.md)
 
+ArcSys CLIの導入・コマンド・出力形式・CI利用: [ArcSys CLI 完全Wiki](docs/ARCSYS_CLI_COMPLETE_WIKI_JA.md)
+
 Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.9ではネイティブ`.arc`ファイル選択、未完成回路の安全な下書き保存、保存済みCoreだけを開く制御を追加しました。alpha.8の通常ArcSysソース読込、alpha.7の保存時Auto Deploy、alpha.6のCore専用自動反映も含みます。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
 
 v1.7.0ではFabricエディター下部に攻撃力・DPS・連射力・消費魔力のリアルタイム戦闘指標を追加しました。新しい術式強化として、低負荷で防御を15～55%貫通する `ARMOR_PENETRATION` と、莫大な魔力・実行負荷を使って確定ダメージを与える `TRUE_DAMAGE` を追加しています。
