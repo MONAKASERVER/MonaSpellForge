@@ -33,6 +33,12 @@ import net.monacraft.spellforge.model.SpellModel.PortType;
 import net.monacraft.spellforge.model.SpellModel.ValidationIssue;
 import net.monacraft.spellforge.protocol.SpellForgeProtocol;
 
+import java.awt.FileDialog;
+import java.awt.Frame;
+import java.awt.GraphicsEnvironment;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -143,9 +149,9 @@ public final class SpellForgeScreen extends Screen {
                 .bounds(x + (buttonWidth + gap) * 2, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("monaspellforge.save"), button -> send(SpellForgeProtocol.Type.SAVE_REQ))
                 .bounds(x + (buttonWidth + gap) * 3, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("出力"), button -> exportArc())
+        addRenderableWidget(Button.builder(Component.literal(".arc出力"), button -> exportArc())
                 .bounds(x + (buttonWidth + gap) * 4, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("取込"), button -> importArc())
+        addRenderableWidget(Button.builder(Component.literal(".arc読込"), button -> importArc())
                 .bounds(x + (buttonWidth + gap) * 5, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("monaspellforge.close"), button -> onClose())
                 .bounds(x + (buttonWidth + gap) * 6, y, buttonWidth, 20).build());
@@ -201,15 +207,60 @@ public final class SpellForgeScreen extends Screen {
     }
 
     private void exportArc() {
-        String source = ArcCircuitCodec.toArcSource(circuit);
-        minecraft.keyboardHandler.setClipboard(source);
-        status = Component.literal("回路を.arc形式でクリップボードへ出力しました");
-        statusColor = CONNECTED;
+        status = Component.literal("ダウンロードフォルダーへ.arcを保存しています…");
+        statusColor = STATUS_WARNING;
+        Circuit snapshot = circuit;
+        Thread.startVirtualThread(() -> {
+            try {
+                Path destination = ArcFileTransfer.exportToDownloads(snapshot);
+                minecraft.execute(() -> {
+                    status = Component.literal(destination.getFileName() + " をダウンロードフォルダーへ保存しました");
+                    statusColor = CONNECTED;
+                });
+            } catch (IOException | RuntimeException error) {
+                minecraft.execute(() -> setError(".arcを保存できませんでした: " + readableFileError(error)));
+            }
+        });
     }
 
     private void importArc() {
+        if (GraphicsEnvironment.isHeadless()) {
+            setError("この環境ではファイル選択画面を開けません");
+            return;
+        }
+        status = Component.literal("読み込む.arcファイルを選択してください…");
+        statusColor = STATUS_WARNING;
+        Thread.startVirtualThread(() -> {
+            File selected = chooseArcFile();
+            if (selected == null) {
+                minecraft.execute(() -> {
+                    status = Component.literal(".arcの読み込みをキャンセルしました");
+                    statusColor = TEXT_MUTED;
+                });
+                return;
+            }
+            try {
+                String source = ArcFileTransfer.readArc(selected.toPath());
+                minecraft.execute(() -> applyImportedArc(source));
+            } catch (IOException | RuntimeException error) {
+                minecraft.execute(() -> setError(".arcを読み込めませんでした: " + readableFileError(error)));
+            }
+        });
+    }
+
+    private File chooseArcFile() {
+        FileDialog dialog = new FileDialog((Frame) null, "MonaSpellForge — .arcを読み込む", FileDialog.LOAD);
+        dialog.setDirectory(ArcFileTransfer.downloadsDirectory().toString());
+        dialog.setFile("*.arc");
+        dialog.setFilenameFilter((directory, name) -> name.toLowerCase(Locale.ROOT).endsWith(".arc"));
+        dialog.setVisible(true);
+        File[] selected = dialog.getFiles();
+        dialog.dispose();
+        return selected.length == 0 ? null : selected[0];
+    }
+
+    private void applyImportedArc(String source) {
         try {
-            String source = minecraft.keyboardHandler.getClipboard();
             ArcCircuitCodec.PortableCircuit imported = ArcCircuitCodec.fromArcSource(source);
 
             Map<PaletteKey, ArrayDeque<OwnedFragment>> available = new HashMap<>();
@@ -248,8 +299,13 @@ public final class SpellForgeScreen extends Screen {
         } catch (RuntimeException error) {
             setError(error.getMessage() != null && error.getMessage().startsWith("missing:")
                     ? "必要な所持欠片が不足しています: " + error.getMessage().substring(8)
-                    : "対応するMonaSpellForge .arcをクリップボードから読み込めませんでした");
+                    : "対応するMonaSpellForge .arcではありません");
         }
+    }
+
+    private static String readableFileError(Exception error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
     }
 
     private void acceptValidation(String payload) {
