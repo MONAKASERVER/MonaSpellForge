@@ -2,6 +2,14 @@
 
 更新: 2026-10-28
 
+## 2.0.0-alpha.6 — Core-scoped VS Code Editing
+
+- `ARCSYS_CORE`の右クリックメニューと制御パネルへ`VS Codeで編集`を追加
+- 回路を先にサーバー保存し、対象の回路ID・ノードIDに限定したペアリング情報をFabric BridgeからVS Codeへ通知
+- 既存紐付けがあれば術式を自動で開き、未紐付けなら新規`.arc`を作成
+- 対象文書の`Ctrl+S`でPaper検証・デプロイ・`LATEST`紐付けを順番に自動実行
+- 通常接続や別文書の保存では自動反映せず、失敗時は従来のCore紐付けを維持
+
 ## 2.0.0-alpha.5 — Native `.arc` File Transfer
 
 - Fabric回路エディターの`.arc出力`はクリップボードではなく、OSのダウンロードフォルダーへUTF-8の`.arc`ファイルを保存
