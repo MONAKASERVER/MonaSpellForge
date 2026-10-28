@@ -1,5 +1,7 @@
 # MonaSpellForge
 
+ArcSysの包括的な日本語ドキュメント: [ArcSys 2.0 完全Wiki](docs/ARCSYS_COMPLETE_WIKI_JA.md)
+
 Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.8では`.arc読込`がノード回路ファイルと通常のArcSysソースを自動判別し、通常ソースをPaperで検証して術式として取り込めるようになりました。alpha.7の保存時Auto Deployとクリエイティブ保護、alpha.6のCore専用自動反映も含みます。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
 
 v1.7.0ではFabricエディター下部に攻撃力・DPS・連射力・消費魔力のリアルタイム戦闘指標を追加しました。新しい術式強化として、低負荷で防御を15～55%貫通する `ARMOR_PENETRATION` と、莫大な魔力・実行負荷を使って確定ダメージを与える `TRUE_DAMAGE` を追加しています。
