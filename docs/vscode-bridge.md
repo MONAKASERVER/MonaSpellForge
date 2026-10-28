@@ -24,7 +24,18 @@ The bridge listens only on `127.0.0.1:27128`. It is closed on Minecraft disconne
 - `ArcSys: View ArcVM Logs`
 - `ArcSys: Disconnect`
 
-Deploy is always explicit. Paper recompiles source, rechecks permissions and capabilities, and uses optimistic revisions. Existing activations are not mutated; the new revision becomes available to later activations.
+Deploy is explicit during normal editing. The Core-scoped direct editing session described below also treats saving its one designated document as an explicit deploy action. Paper recompiles source, rechecks permissions and capabilities, and uses optimistic revisions. Existing activations are not mutated; the new revision becomes available to later activations.
+
+## Direct ARCSYS_CORE editing
+
+Right-click an `ARCSYS_CORE` in the Fabric circuit editor and select `VS Codeで編集`. The editor first saves the circuit, starts a pairing session scoped to that circuit/node pair, and displays the six-digit code. After `ArcSys: Connect to Minecraft`:
+
+- an existing bound program is opened automatically, or a new `.arc` document is prepared for an unbound Core;
+- saving that specific document runs server-side validation and deployment;
+- a successful deployment is bound back to the selected Core in `LATEST` mode;
+- compile, permission, revision or binding failures leave the previous binding unchanged and are shown in `ArcSys / ArcVM` output.
+
+Automatic deployment applies only to the document opened by this explicit Core editing session. Ordinary `.arc` files and normal VS Code connections still require the manual deploy command.
 
 ## Current alpha boundary
 

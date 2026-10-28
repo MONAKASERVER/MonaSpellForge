@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { randomUUID } from 'crypto';
-import { BridgeRequest, BridgeRequestType, BridgeResponse, MAX_MESSAGE_BYTES } from './protocol';
+import { BridgeHello, BridgeRequest, BridgeRequestType, BridgeResponse, MAX_MESSAGE_BYTES } from './protocol';
 
 export class FabricBridge {
   private socket?: WebSocket;
@@ -11,7 +11,7 @@ export class FabricBridge {
 
   get connected(): boolean { return this.socket?.readyState === WebSocket.OPEN; }
 
-  async connect(token: string): Promise<void> {
+  async connect(token: string): Promise<BridgeHello> {
     if (!/^\d{6}$/.test(token)) throw new Error('ペアリングコードは6桁です');
     this.disconnect();
     this.token = token;
@@ -25,7 +25,7 @@ export class FabricBridge {
       socket.once('open', () => { clearTimeout(timer); resolve(); });
       socket.once('error', error => { clearTimeout(timer); reject(error); });
     });
-    await this.request('hello', { client: 'vscode', clientVersion: '2.0.0-alpha.4' });
+    return await this.request('hello', { client: 'vscode', clientVersion: '2.0.0-alpha.4' }) as BridgeHello;
   }
 
   request(type: BridgeRequestType, payload: Record<string, unknown>): Promise<unknown> {

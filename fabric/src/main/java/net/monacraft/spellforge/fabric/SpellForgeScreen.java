@@ -111,6 +111,7 @@ public final class SpellForgeScreen extends Screen {
     private double lastMouseX;
     private double lastMouseY;
     private ContextMenu contextMenu;
+    private UUID pendingVsCodeCore;
 
     SpellForgeScreen(Screen parent, Circuit circuit, String token) {
         super(Component.translatable("monaspellforge.title"));
@@ -165,6 +166,7 @@ public final class SpellForgeScreen extends Screen {
                 try {
                     JsonObject response = JsonParser.parseString(frame.payload()).getAsJsonObject();
                     if (response.has("saved") && !response.get("saved").getAsBoolean()) {
+                        pendingVsCodeCore = null;
                         setError("保存できませんでした: " + readableError(response.has("message")
                                 ? response.get("message").getAsString() : "SERVER_REJECTED"));
                         return;
@@ -176,6 +178,16 @@ public final class SpellForgeScreen extends Screen {
                 }
                 status = Component.literal("保存しました（Revision " + frame.baseRevision() + "）");
                 statusColor = CONNECTED;
+                if (pendingVsCodeCore != null) {
+                    UUID targetNode = pendingVsCodeCore;
+                    pendingVsCodeCore = null;
+                    String code = ArcSysDeveloperBridge.start(minecraft, token, circuit.circuitId(), targetNode);
+                    if (code.equals("起動失敗")) setError("VS Code Bridgeを起動できませんでした");
+                    else {
+                        status = Component.literal("VS Codeコード: " + code + " — 保存すると選択中のCoreへ自動反映");
+                        statusColor = CONNECTED;
+                    }
+                }
             }
             case CONFLICT -> setError("別の画面で更新されています。/msf open で開き直してください");
             case ERROR -> setError("通信エラー: " + readableError(frame.payload()));
@@ -629,9 +641,9 @@ public final class SpellForgeScreen extends Screen {
         CircuitNode contextNode = menu.nodeId == null ? null : node(menu.nodeId);
         List<String> labels = menu.nodeId == null ? List.of("ノードを追加")
                 : contextNode != null && contextNode.fragmentId().equals("ARCSYS_CORE")
-                ? List.of("ArcSys制御パネル", "ノードを複製", "ノードをしまう", "ノードを追加")
+                ? List.of("VS Codeで編集", "ArcSys制御パネル", "ノードを複製", "ノードをしまう", "ノードを追加")
                 : List.of("ノードを複製", "ノードをしまう", "ノードを追加");
-        int menuWidth = 132;
+        int menuWidth = 156;
         int menuHeight = labels.size() * 22 + 6;
         int x = Math.min(menu.x, width - menuWidth - 4);
         int y = Math.min(menu.y, height - menuHeight - 4);
@@ -890,9 +902,9 @@ public final class SpellForgeScreen extends Screen {
         CircuitNode contextNode = menu.nodeId == null ? null : node(menu.nodeId);
         List<ContextAction> actions = menu.nodeId == null ? List.of(ContextAction.SEARCH)
                 : contextNode != null && contextNode.fragmentId().equals("ARCSYS_CORE")
-                ? List.of(ContextAction.CONFIGURE_CORE, ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH)
+                ? List.of(ContextAction.EDIT_CORE_VSCODE, ContextAction.CONFIGURE_CORE, ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH)
                 : List.of(ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH);
-        int width = 132;
+        int width = 156;
         int x = Math.min(menu.x, this.width - width - 4);
         int height = actions.size() * 22 + 6;
         int y = Math.min(menu.y, this.height - height - 4);
@@ -909,8 +921,20 @@ public final class SpellForgeScreen extends Screen {
             case STOW -> stowNode(menu.nodeId);
             case DUPLICATE -> duplicateNode(menu.nodeId);
             case CONFIGURE_CORE -> minecraft.setScreen(new ArcCoreScreen(this, token, circuit.circuitId(), menu.nodeId));
+            case EDIT_CORE_VSCODE -> openCoreInVsCode(menu.nodeId);
         }
         return true;
+    }
+
+    private void openCoreInVsCode(UUID nodeId) {
+        if (nodeId == null || node(nodeId) == null) {
+            setError("術式演算核が見つかりません");
+            return;
+        }
+        pendingVsCodeCore = nodeId;
+        send(SpellForgeProtocol.Type.SAVE_REQ);
+        status = Component.literal("回路を保存してVS Code接続を準備しています…");
+        statusColor = STATUS_WARNING;
     }
 
     private void stowNode(UUID nodeId) {
@@ -1363,7 +1387,7 @@ public final class SpellForgeScreen extends Screen {
     @Override
     public boolean isPauseScreen() { return false; }
 
-    private enum ContextAction { CONFIGURE_CORE, DUPLICATE, STOW, SEARCH }
+    private enum ContextAction { EDIT_CORE_VSCODE, CONFIGURE_CORE, DUPLICATE, STOW, SEARCH }
     private enum CategoryTab {
         ALL("全部", null), TRIGGER("発動", Category.TRIGGER), ELEMENT("属性", Category.ELEMENT),
         SHAPE("形状", Category.SHAPE), TARGET("対象", Category.TARGET), MODIFIER("補助", Category.MODIFIER),

@@ -3,13 +3,16 @@ import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
 import { FabricBridge } from './bridge';
 import { StudioProvider } from './studio';
-import { StudioSnapshot } from './protocol';
+import { CoreEditorTarget, StudioSnapshot } from './protocol';
 
 let client: LanguageClient | undefined;
 let bridge: FabricBridge | undefined;
 const output = vscode.window.createOutputChannel('ArcSys / ArcVM');
 const spellMetadata = new Map<string, { spellId: string; revision: number }>();
 let debugSessionId: string | undefined;
+let autoCoreSession: { target: CoreEditorTarget; document: vscode.TextDocument; spellId?: string; revision?: number } | undefined;
+let autoDeploying = false;
+let autoDeployQueued = false;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const serverModule = context.asAbsolutePath(path.join('out', 'server.js'));
@@ -27,9 +30,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (!token) return;
     const config = vscode.workspace.getConfiguration('arcsys.bridge');
     bridge = new FabricBridge(config.get('port', 27128), config.get('timeoutMs', 8000));
-    await run('接続', async () => { await bridge!.connect(token); await refreshStudio(studio); return 'Minecraftへ接続しました'; });
+    await run('接続', async () => {
+      const hello = await bridge!.connect(token);
+      await refreshStudio(studio);
+      if (hello.coreTarget?.autoDeployOnSave) await openCoreEditorSession(hello.coreTarget);
+      return hello.coreTarget ? 'Minecraftへ接続しました。このファイルを保存すると選択中のCoreへ自動反映されます' : 'Minecraftへ接続しました';
+    });
   });
-  register('arcsys.disconnect', () => { bridge?.disconnect(); bridge = undefined; studio.update(); vscode.window.showInformationMessage('ArcSysを切断しました'); });
+  register('arcsys.disconnect', () => { bridge?.disconnect(); bridge = undefined; autoCoreSession = undefined; studio.update(); vscode.window.showInformationMessage('ArcSysを切断しました'); });
   register('arcsys.validate', () => sourceRequest('validate'));
   register('arcsys.compile', () => sourceRequest('compile'));
   register('arcsys.deploy', () => sourceRequest('deploy'));
@@ -92,6 +100,73 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     spellMetadata.set(document.uri.toString(), { spellId: selected.id, revision: opened.revision });
     await vscode.window.showTextDocument(document);
   });
+
+  context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
+    if (!autoCoreSession || autoCoreSession.document !== document || document.languageId !== 'arcsys') return;
+    void queueAutoDeploy(document, studio);
+  }));
+
+  async function openCoreEditorSession(target: CoreEditorTarget): Promise<void> {
+    const core = await requireBridge().request('inspectCore', { circuitId: target.circuitId, nodeId: target.nodeId }) as CoreInfo & { spellId?: string; revision?: number; mode?: string };
+    const existingSpellId = core.spellId;
+    const hasSpell = existingSpellId !== undefined && existingSpellId !== '00000000-0000-0000-0000-000000000000' && core.status !== 'UNBOUND';
+    let document: vscode.TextDocument;
+    let spellId: string | undefined;
+    let revision: number | undefined;
+    if (hasSpell) {
+      const opened = await requireBridge().request('openSpell', { spellId: existingSpellId }) as { source: string; revision: number };
+      document = await vscode.workspace.openTextDocument({ language: 'arcsys', content: opened.source });
+      spellId = existingSpellId;
+      revision = opened.revision;
+      spellMetadata.set(document.uri.toString(), { spellId: existingSpellId, revision });
+    } else {
+      const suffix = target.nodeId.replaceAll('-', '').slice(0, 8);
+      document = await vscode.workspace.openTextDocument({ language: 'arcsys', content:
+        `spell Core_${suffix} {\n  on cast {\n    return true;\n  }\n}\n` });
+    }
+    autoCoreSession = { target, document, spellId, revision };
+    await vscode.window.showTextDocument(document);
+    vscode.window.showInformationMessage('ARCSYS_CORE編集セッションを開始しました。Ctrl+Sで検証・デプロイ・紐付けを自動実行します');
+  }
+
+  async function queueAutoDeploy(document: vscode.TextDocument, provider: StudioProvider): Promise<void> {
+    if (autoDeploying) { autoDeployQueued = true; return; }
+    autoDeploying = true;
+    try {
+      do {
+        autoDeployQueued = false;
+        await autoDeployAndBind(document, provider);
+      } while (autoDeployQueued && autoCoreSession?.document === document);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.appendLine(`[${new Date().toISOString()}] core:auto-save failed\n${message}`);
+      output.show(true);
+      vscode.window.showErrorMessage(`ARCSYS_COREへの自動反映に失敗しました: ${message}`);
+    } finally {
+      autoDeploying = false;
+    }
+  }
+
+  async function autoDeployAndBind(document: vscode.TextDocument, provider: StudioProvider): Promise<void> {
+    const session = autoCoreSession;
+    if (!session || session.document !== document) return;
+    const result = await requireBridge().request('deploy', {
+      ...(await projectPayload(document)), uri: document.uri.toString(), explicit: true,
+      spellId: session.spellId, baseRevision: session.revision ?? 0
+    }) as { spellId?: string; revision?: number };
+    if (!result.spellId || result.revision === undefined) throw new Error('デプロイ結果に術式IDまたはRevisionがありません');
+    session.spellId = result.spellId;
+    session.revision = result.revision;
+    spellMetadata.set(document.uri.toString(), { spellId: result.spellId, revision: result.revision });
+    const bound = await requireBridge().request('bindCore', {
+      circuitId: session.target.circuitId, nodeId: session.target.nodeId,
+      spellId: result.spellId, revision: result.revision, mode: 'LATEST'
+    });
+    output.appendLine(`[${new Date().toISOString()}] core:auto-save\n${JSON.stringify({ deploy: result, bind: bound }, null, 2)}`);
+    output.show(true);
+    await refreshStudio(provider);
+    vscode.window.showInformationMessage(`ARCSYS_COREへ自動反映しました（Revision ${result.revision}）`);
+  }
 
   async function sourceRequest(type: 'validate' | 'compile' | 'deploy' | 'simulate' | 'profile' | 'debugStart' | 'nodeGraph'): Promise<void> {
     const editor = vscode.window.activeTextEditor;

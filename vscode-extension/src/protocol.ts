@@ -31,3 +31,15 @@ export interface StudioSnapshot {
   cores: Array<{ bindingId: string; circuitId: string; nodeId: string; spellId: string; program: string;
     circuit: string; revision: number; mode: 'PINNED' | 'LATEST'; level: number; status: string }>;
 }
+
+export interface CoreEditorTarget {
+  circuitId: string;
+  nodeId: string;
+  autoDeployOnSave: true;
+}
+
+export interface BridgeHello {
+  minecraftConnected: boolean;
+  at?: string;
+  coreTarget?: CoreEditorTarget;
+}

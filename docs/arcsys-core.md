@@ -12,6 +12,7 @@ No VS Code client can contact Paper directly. Core operations use the existing r
 
 - Fabric: save the circuit, right-click the core node, then choose `ArcSys制御パネル`.
 - VS Code: deploy the current `.arc`, then run `ArcSys: Bind Program to Core`.
+- Direct edit: right-click the Core in the Fabric editor, choose `VS Codeで編集`, pair VS Code, then save the opened `.arc`; validation, deployment and `LATEST` binding are performed automatically for that Core only.
 - No Mod / Bedrock: use `/msf arc core list` followed by the bind, inspect or unbind subcommand shown by command help.
 - `PINNED` fixes one immutable revision. `LATEST` resolves the latest verified revision once at execution start.
 
