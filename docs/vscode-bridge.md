@@ -35,7 +35,13 @@ Right-click an `ARCSYS_CORE` in the Fabric circuit editor and select `VS Codeで
 - a successful deployment is bound back to the selected Core in `LATEST` mode;
 - compile, permission, revision or binding failures leave the previous binding unchanged and are shown in `ArcSys / ArcVM` output.
 
-Automatic deployment applies only to the document opened by this explicit Core editing session. Ordinary `.arc` files and normal VS Code connections still require the manual deploy command.
+Core-scoped automatic deployment applies only to the document opened by this explicit editing session. Ordinary `.arc` files and normal VS Code connections require the manual deploy command by default, unless the optional setting below is enabled.
+
+## Optional Auto Deploy on Save
+
+For ordinary `.arc` files, click the VS Code status-bar item `ArcSys Auto Deploy: OFF` or run `ArcSys: Toggle Auto Deploy on Save`. When enabled, saving a connected ArcSys document automatically deploys it after a short debounce. The Paper server still recompiles and validates the source. This option does not automatically bind the program to a Core; use the Core-scoped editing flow above when save-and-bind behavior is required.
+
+Auto Deploy is disabled by default and stops immediately when the Fabric bridge disconnects. Failed validation or deployment is reported in `ArcSys / ArcVM` output and does not replace an existing server revision.
 
 ## Current alpha boundary
 

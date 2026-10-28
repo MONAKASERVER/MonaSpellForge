@@ -41,6 +41,7 @@
       { "command": "arcsys.listCores", "title": "ArcSys: List ArcSys Cores" },
       { "command": "arcsys.inspectCore", "title": "ArcSys: Inspect Core" },
       { "command": "arcsys.validateCoreBinding", "title": "ArcSys: Validate Core Binding" },
+      { "command": "arcsys.toggleAutoDeploy", "title": "ArcSys: Toggle Auto Deploy on Save" },
       { "command": "arcsys.disconnect", "title": "ArcSys: Disconnect" }
     ],
     "viewsContainers": {
@@ -51,7 +52,8 @@
       "title": "ArcSys",
       "properties": {
         "arcsys.bridge.port": { "type": "number", "default": 27128, "minimum": 1024, "maximum": 65535, "description": "Fabric Mod localhost bridge port" },
-        "arcsys.bridge.timeoutMs": { "type": "number", "default": 8000, "minimum": 1000, "maximum": 30000 }
+        "arcsys.bridge.timeoutMs": { "type": "number", "default": 8000, "minimum": 1000, "maximum": 30000 },
+        "arcsys.autoDeployOnSave": { "type": "boolean", "default": false, "description": "接続中に通常の.arcファイルを保存した時、検証済みRevisionをMinecraftへ自動デプロイします。Core専用編集セッションはこの設定に関係なく自動反映されます。" }
       }
     }
   },
