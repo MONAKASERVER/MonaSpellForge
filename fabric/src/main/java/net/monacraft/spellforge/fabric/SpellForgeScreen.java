@@ -112,6 +112,7 @@ public final class SpellForgeScreen extends Screen {
     private double lastMouseY;
     private ContextMenu contextMenu;
     private UUID pendingVsCodeCore;
+    private UUID pendingArcFileImport;
 
     SpellForgeScreen(Screen parent, Circuit circuit, String token) {
         super(Component.translatable("monaspellforge.title"));
@@ -190,6 +191,7 @@ public final class SpellForgeScreen extends Screen {
                 }
             }
             case CONFLICT -> setError("別の画面で更新されています。/msf open で開き直してください");
+            case ARC_FILE_IMPORT_RESULT -> acceptArcFileImport(frame);
             case ERROR -> setError("通信エラー: " + readableError(frame.payload()));
             default -> { }
         }
@@ -272,6 +274,10 @@ public final class SpellForgeScreen extends Screen {
     }
 
     private void applyImportedArc(String source) {
+        if (!ArcCircuitCodec.hasEmbeddedCircuit(source)) {
+            deployImportedArc(source);
+            return;
+        }
         try {
             ArcCircuitCodec.PortableCircuit imported = ArcCircuitCodec.fromArcSource(source);
 
@@ -312,6 +318,52 @@ public final class SpellForgeScreen extends Screen {
             setError(error.getMessage() != null && error.getMessage().startsWith("missing:")
                     ? "必要な所持欠片が不足しています: " + error.getMessage().substring(8)
                     : "対応するMonaSpellForge .arcではありません");
+        }
+    }
+
+    private void deployImportedArc(String source) {
+        byte[] encoded = source.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (encoded.length > 23_000) {
+            setError("ArcSysソースが転送上限（23 KB）を超えています。VS Code Bridgeを使用してください");
+            return;
+        }
+        UUID requestId = UUID.randomUUID();
+        JsonObject payload = new JsonObject();
+        payload.addProperty("source", source);
+        payload.addProperty("explicit", true);
+        pendingArcFileImport = requestId;
+        MonaSpellForgeClient.send(new SpellForgeProtocol.Frame(
+                SpellForgeProtocol.Type.ARC_FILE_IMPORT_REQ, requestId, token, null, 0, payload.toString()));
+        status = Component.literal("ArcSysソースをサーバーで検証・読み込み中です…");
+        statusColor = STATUS_WARNING;
+    }
+
+    private void acceptArcFileImport(SpellForgeProtocol.Frame frame) {
+        if (pendingArcFileImport == null || !pendingArcFileImport.equals(frame.requestId())) return;
+        pendingArcFileImport = null;
+        try {
+            JsonObject response = JsonParser.parseString(frame.payload()).getAsJsonObject();
+            if (!response.has("ok") || !response.get("ok").getAsBoolean()) {
+                String message = response.has("message") ? response.get("message").getAsString() : "SERVER_REJECTED";
+                setError("ArcSysソースを読み込めませんでした: " + message);
+                return;
+            }
+            JsonObject result = response.getAsJsonObject("result");
+            if (result == null || !result.has("valid") || !result.get("valid").getAsBoolean()) {
+                String message = "構文または型にエラーがあります";
+                if (result != null && result.has("diagnostics") && result.getAsJsonArray("diagnostics").size() > 0) {
+                    JsonObject diagnostic = result.getAsJsonArray("diagnostics").get(0).getAsJsonObject();
+                    message = jsonText(diagnostic, "message", message)
+                            + "（" + (diagnostic.has("line") ? diagnostic.get("line").getAsInt() : 1) + "行目）";
+                }
+                setError("ArcSysソースを読み込めませんでした: " + message);
+                return;
+            }
+            long revision = result.has("revision") ? result.get("revision").getAsLong() : 1;
+            status = Component.literal("ArcSys術式として読み込みました（Revision " + revision + "）");
+            statusColor = CONNECTED;
+        } catch (RuntimeException error) {
+            setError("ArcSysソースの応答を処理できませんでした: " + readableFileError(error));
         }
     }
 

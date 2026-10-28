@@ -1,6 +1,14 @@
 # 実装状況
 
-更新: 2026-10-28
+更新: 2026-10-29
+
+## 2.0.0-alpha.8 — `.arc` Import Compatibility
+
+- Fabricの`.arc読込`でノード回路キャリアと通常のArcSysソースを自動判別
+- ノード回路キャリアは従来どおり所有欠片へ安全に再割当てして編集画面へ復元
+- 通常のArcSysソースはPaperへ送り、権限・構文・型・Capability・所有欠片要件をサーバー権威で再検証して新規術式として保存
+- コンパイル診断の先頭メッセージと行番号をMod画面へ返却
+- 23 KBを超える通常ソースはPlugin Messageへ流さずVS Code Bridgeの利用を案内
 
 ## 2.0.0-alpha.7 — VS Code Auto Deploy
 

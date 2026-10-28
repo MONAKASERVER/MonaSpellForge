@@ -33,6 +33,11 @@ public final class ArcCircuitCodec {
 
     private ArcCircuitCodec() { }
 
+    public static boolean hasEmbeddedCircuit(String source) {
+        if (source == null || source.isBlank()) return false;
+        return source.lines().anyMatch(value -> value.stripLeading().startsWith(MARKER));
+    }
+
     public static String toArcSource(Circuit circuit) {
         List<PortableNode> nodes = circuit.nodes().stream().map(node -> new PortableNode(node.nodeId().toString(),
                 node.fragmentId(), node.level(), node.parameters(), node.uiX(), node.uiY())).toList();
@@ -48,7 +53,7 @@ public final class ArcCircuitCodec {
     }
 
     public static PortableCircuit fromArcSource(String source) {
-        String line = source.lines().filter(value -> value.startsWith(MARKER)).findFirst()
+        String line = source.lines().map(String::stripLeading).filter(value -> value.startsWith(MARKER)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("missing circuit marker"));
         String token = line.substring(MARKER.length()).trim();
         int separator = token.lastIndexOf('.');
