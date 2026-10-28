@@ -2,6 +2,14 @@
 
 更新: 2026-10-28
 
+## 2.0.0-alpha.5 — Native `.arc` File Transfer
+
+- Fabric回路エディターの`.arc出力`はクリップボードではなく、OSのダウンロードフォルダーへUTF-8の`.arc`ファイルを保存
+- 既存ファイルを上書きせず、同名時は連番を付加
+- `.arc読込`はOS標準のファイル選択画面（Windowsではエクスプローラー）を使用
+- 拡張子と1 MiBの上限を検証し、読込後も所持欠片・回路制限・サーバー検証を維持
+- ファイルI/Oはゲーム描画スレッド外で処理
+
 ## 2.0.0-alpha.4 — ArcSys Project / Source Tooling
 
 - ユーザー定義`struct`とpayload付き`enum`を追加し、型検査・コンストラクタ・フィールド参照・網羅性警告・VM実行まで接続
@@ -11,7 +19,7 @@
 - VS Codeにproject収集と`ArcSys: Profile Current Spell`を追加
 - ノード、配線、座標、parameterを署名付き`.arc`キャリアへ完全可逆化。取込時は所持欠片個体へ安全に再割当て
 - HEALをHP5につき最低200 MPへ再調整し、増幅・POWER込みでも比率を下回らないコンパイラ下限を追加
-- alpha.4は本番未導入
+- alpha.4 Paperは本番導入済み
 
 ## 2.0.0-alpha.3 — ArcSys Magic Language Foundation
 
