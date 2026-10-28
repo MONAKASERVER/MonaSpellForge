@@ -1,5 +1,7 @@
 package net.monacraft.spellforge.paper;
 
+import net.monacraft.spellforge.catalog.FragmentCatalog;
+import net.monacraft.spellforge.compiler.CircuitCompiler;
 import net.monacraft.spellforge.model.SpellModel.Circuit;
 import net.monacraft.spellforge.model.SpellModel.CircuitNode;
 import net.monacraft.spellforge.model.SpellModel.FragmentInstance;
@@ -53,6 +55,18 @@ class SpellDatabaseTest {
             assertEquals(first.circuitId(), database.activeCircuit(owner).orElseThrow().circuitId());
             assertTrue(database.setCircuitActive(second.circuitId(), owner, true));
             assertEquals(second.circuitId(), database.activeCircuit(owner).orElseThrow().circuitId());
+        }
+    }
+
+    @Test void circuitServiceRefusesToActivateAnInvalidDraft() throws Exception {
+        UUID owner = UUID.randomUUID();
+        try (SpellDatabase database = new SpellDatabase(temp.resolve("invalid-draft.sqlite"))) {
+            Circuit draft = database.save(Circuit.empty(owner), 0);
+            assertTrue(database.setCircuitActive(draft.circuitId(), owner, false));
+            DefaultCircuitService service = new DefaultCircuitService(database,
+                    new CircuitCompiler(FragmentCatalog.defaults()));
+            assertFalse(service.setActive(draft.circuitId(), owner, true));
+            assertTrue(database.activeCircuit(owner).isEmpty());
         }
     }
 

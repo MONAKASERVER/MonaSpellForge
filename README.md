@@ -2,7 +2,7 @@
 
 ArcSysの包括的な日本語ドキュメント: [ArcSys 2.0 完全Wiki](docs/ARCSYS_COMPLETE_WIKI_JA.md)
 
-Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.8では`.arc読込`がノード回路ファイルと通常のArcSysソースを自動判別し、通常ソースをPaperで検証して術式として取り込めるようになりました。alpha.7の保存時Auto Deployとクリエイティブ保護、alpha.6のCore専用自動反映も含みます。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
+Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.9ではネイティブ`.arc`ファイル選択、未完成回路の安全な下書き保存、保存済みCoreだけを開く制御を追加しました。alpha.8の通常ArcSysソース読込、alpha.7の保存時Auto Deploy、alpha.6のCore専用自動反映も含みます。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
 
 v1.7.0ではFabricエディター下部に攻撃力・DPS・連射力・消費魔力のリアルタイム戦闘指標を追加しました。新しい術式強化として、低負荷で防御を15～55%貫通する `ARMOR_PENETRATION` と、莫大な魔力・実行負荷を使って確定ダメージを与える `TRUE_DAMAGE` を追加しています。
 
@@ -17,8 +17,8 @@ $env:JAVA_HOME='C:\path\to\jdk-25'
 
 成果物:
 
-- `paper/build/libs/MonaSpellForge-Paper-1.6.1.jar`
-- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.6.1.jar`
+- `paper/build/libs/MonaSpellForge-Paper-2.0.0-alpha.9.jar`
+- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-2.0.0-alpha.9.jar`
 
 Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアントの`mods`へ配置します。ModがないJava版・統合版は54スロットのサーバーGUIを利用できます。
 
@@ -26,7 +26,7 @@ Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアント
 
 [GitHub Releases](https://github.com/MONAKASERVER/MonaSpellForge/releases)から、利用中のMinecraftバージョンに対応する`MonaSpellForge-Fabric-*.jar`をダウンロードし、クライアントの`mods`フォルダへ配置してください。
 
-v1.6.1の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
+2.0.0-alpha.9の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。PaperとFabricは同じMonaSpellForgeバージョンを使用してください。
 
 Java版・統合版共通のWebエディターは、ゲーム内で `/msf web` を実行して発行される6桁コードで連携します。コードは10分間・1回限り有効で、保存処理はPaper側でも所有権、所持ノード、Revision、回路上限を再検証します。
 

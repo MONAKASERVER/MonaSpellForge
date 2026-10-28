@@ -2,6 +2,15 @@
 
 更新: 2026-10-29
 
+## 2.0.0-alpha.9 — Editor / ARCSYS_CORE Usability Repair
+
+- AWTのheadless判定に依存していた`.arc読込`を、Minecraft同梱のLWJGL native file dialogへ移行
+- 未完成回路を安全な下書きとして保存可能にし、Coreの安定した回路ID・ノードIDを確定してから設定画面／VS Code Bridgeを開始
+- 未完成の下書きは自動的に無効化し、検証を通るまで有効化できないようサーバー側で強制
+- `ArcSys制御パネル`を未保存ノードIDで直接開かず、保存成功後だけ遷移
+- Core APIエラーを制御パネルのStatusと詳細欄に表示
+- ModなしGUIも通常保存と下書き保存を区別して案内
+
 ## 2.0.0-alpha.8 — `.arc` Import Compatibility
 
 - Fabricの`.arc読込`でノード回路キャリアと通常のArcSysソースを自動判別

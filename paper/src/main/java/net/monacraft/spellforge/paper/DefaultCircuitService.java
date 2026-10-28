@@ -26,5 +26,11 @@ final class DefaultCircuitService implements CircuitService {
     }
     @Override public boolean delete(UUID circuitId, UUID ownerId) { return database.deleteCircuit(circuitId, ownerId); }
     @Override public Optional<Circuit> getActiveCircuit(UUID ownerId) { return database.activeCircuit(ownerId); }
-    @Override public boolean setActive(UUID circuitId, UUID ownerId, boolean active) { return database.setCircuitActive(circuitId, ownerId, active); }
+    @Override public boolean setActive(UUID circuitId, UUID ownerId, boolean active) {
+        if (active) {
+            Circuit circuit = database.circuit(circuitId).filter(value -> value.ownerId().equals(ownerId)).orElse(null);
+            if (circuit == null || !compiler.compile(circuit).valid()) return false;
+        }
+        return database.setCircuitActive(circuitId, ownerId, active);
+    }
 }

@@ -62,7 +62,12 @@ final class ArcCoreScreen extends Screen {
         String action = pending.remove(frame.requestId()); if (action == null) return;
         try {
             JsonObject response = JsonParser.parseString(frame.payload()).getAsJsonObject();
-            if (!response.get("ok").getAsBoolean()) { JsonObject error = response.getAsJsonObject("error"); lastResult = error.get("code").getAsString() + ": " + error.get("message").getAsString(); return; }
+            if (!response.get("ok").getAsBoolean()) {
+                JsonObject error = response.getAsJsonObject("error");
+                status = error.get("code").getAsString();
+                lastResult = status + ": " + error.get("message").getAsString();
+                return;
+            }
             JsonObject result = response.getAsJsonObject("result");
             if (action.equals("listSpells")) {
                 spells.clear(); JsonArray values = result.getAsJsonArray("spells");
