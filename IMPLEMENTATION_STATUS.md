@@ -2,6 +2,15 @@
 
 更新: 2026-10-28
 
+## 2.0.0-alpha.7 — VS Code Auto Deploy
+
+- VS Codeステータスバーへ`ArcSys Auto Deploy: ON/OFF`を追加
+- `ArcSys: Toggle Auto Deploy on Save`コマンドと永続設定を追加
+- ONの間は接続中の通常`.arc`保存を650msデバウンスし、Paperへ自動デプロイ
+- サーバーの検証・Revision競合・権限判定は維持し、失敗時は出力パネルへ理由を表示
+- Core専用編集は設定に依存せず、対象文書だけデプロイと紐付けを自動実行
+- `TRUE_DAMAGE`を含むMonaSpellForgeダメージはクリエイティブ／スペクテイターを最終適用地点で拒否
+
 ## 2.0.0-alpha.6 — Core-scoped VS Code Editing
 
 - `ARCSYS_CORE`の右クリックメニューと制御パネルへ`VS Codeで編集`を追加

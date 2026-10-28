@@ -246,6 +246,7 @@ final class DefaultSpellService implements SpellService {
     }
 
     private void dealDamage(Player caster, LivingEntity target, double damage, CompiledSpell spell) {
+        if (target instanceof Player player && isDamageImmune(player.getGameMode())) return;
         if (node(spell, "TRUE_DAMAGE") != null) {
             DamageSource source = DamageSource.builder(DamageType.GENERIC_KILL)
                     .withCausingEntity(caster).withDirectEntity(caster).build();
@@ -275,6 +276,10 @@ final class DefaultSpellService implements SpellService {
     static double armorMultiplier(double damage, double armor, double toughness) {
         double reductionPoints = Math.min(20.0, Math.max(armor / 5.0, armor - damage / (2.0 + toughness / 4.0)));
         return 1.0 - reductionPoints / 25.0;
+    }
+
+    static boolean isDamageImmune(GameMode gameMode) {
+        return gameMode == GameMode.CREATIVE || gameMode == GameMode.SPECTATOR;
     }
 
     @Override public int cancel(UUID playerId) { Set<UUID> removed = active.remove(playerId);Set<BukkitTask> tasks=scheduled.remove(playerId);if(tasks!=null)tasks.forEach(BukkitTask::cancel);return removed == null ? 0 : removed.size(); }
