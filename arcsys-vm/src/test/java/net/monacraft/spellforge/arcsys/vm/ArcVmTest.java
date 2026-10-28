@@ -1,6 +1,7 @@
 package net.monacraft.spellforge.arcsys.vm;
 
 import net.monacraft.spellforge.arcsys.compiler.ArcCompiler;
+import net.monacraft.spellforge.arcsys.compiler.ArcProjectCompiler;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -190,6 +191,36 @@ class ArcVmTest {
         assertEquals(ArcVm.Status.SUSPENDED, race.status()); assertEquals(1, race.resumeAfterTicks());
         race = vm.resume(raceProgram.program(), race.continuation(), new ArcVm.Limits(200, 0), new NoopHost());
         assertEquals(ArcVm.Status.COMPLETED, race.status()); assertEquals(true, race.value());
+    }
+
+    @Test void executesUserStructAndEnumPayload() {
+        var compiled = new ArcCompiler().compile("""
+            struct TargetInfo { power: Number }
+            enum Decision { Strike(TargetInfo), Wait }
+            spell X { on cast {
+              let info: TargetInfo = TargetInfo(power: 4);
+              let decision: Decision = Decision::Strike(info);
+              return match decision {
+                Decision::Strike(value) => value.power,
+                Decision::Wait => 0
+              };
+            } }
+            """);
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        var result = new ArcVm().run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(200, 0), new NoopHost());
+        assertEquals(ArcVm.Status.COMPLETED, result.status());
+        assertEquals(4L, result.value());
+    }
+
+    @Test void executesFunctionImportedThroughModuleAlias() {
+        var compiled = new ArcProjectCompiler().compile(Map.of(
+                "magic.math", "module magic.math; fn double_it(value: Int) -> Int { return value * 2; }",
+                "main", "module main; use magic.math as math; spell X { on cast { return math.double_it(4); } }"
+        ), "main");
+        assertTrue(compiled.valid(), () -> compiled.diagnostics().toString());
+        var result = new ArcVm().run(compiled.program(), "on:cast", Map.of(), new ArcVm.Limits(100, 0), new NoopHost());
+        assertEquals(ArcVm.Status.COMPLETED, result.status());
+        assertEquals(8.0, ((Number) result.value()).doubleValue());
     }
 
     private static class NoopHost implements ArcVm.Host {

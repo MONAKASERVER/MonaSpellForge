@@ -1,6 +1,42 @@
 # 実装状況
 
-更新: 2026-10-27
+更新: 2026-10-28
+
+## 2.0.0-alpha.4 — ArcSys Project / Source Tooling
+
+- ユーザー定義`struct`とpayload付き`enum`を追加し、型検査・コンストラクタ・フィールド参照・網羅性警告・VM実行まで接続
+- `module` / `use ... as ...`、最大32moduleの有界リンカー、循環import・欠損module・名前衝突の拒否を実装
+- 複数moduleを1Revisionとして保存する決定的project bundleを追加し、Paperで再コンパイルしてから実行
+- bytecode PCからmodule・行・列へ戻せるソースマップと、命令/Host API/ソース行/stack/fuelのArcVMプロファイラーを追加
+- VS Codeにproject収集と`ArcSys: Profile Current Spell`を追加
+- ノード、配線、座標、parameterを署名付き`.arc`キャリアへ完全可逆化。取込時は所持欠片個体へ安全に再割当て
+- HEALをHP5につき最低200 MPへ再調整し、増幅・POWER込みでも比率を下回らないコンパイラ下限を追加
+- alpha.4は本番未導入
+
+## 2.0.0-alpha.3 — ArcSys Magic Language Foundation
+
+- 魔術API定義を単一の `ArcMagicApiCatalog` に統合し、コンパイラ・型検査・VS Code補完の差異を排除
+- `Int` / `Float` / `Number` / `Bool` / `String` に加え、`Entity` / `Location` / `World` / `Block` / `Item` と魔術単位型を静的検査
+- `List<T>` / `Option<T>` / `Result<T,E>` の型引数を関数引数・戻り値・API結果・matchへ伝播
+- `let mut` と不変 `let` / `const` / 可変 `state` を区別し、未定義変数・不正代入をコンパイル時に拒否
+- 魔術APIの名前付き引数、重複、必須引数、型、単位を検証。旧式の単位なし数値は互換警告
+- VS Code補完とHoverに正確なシグネチャ、基礎MP、Capability、Effect種別を表示
+- JavaカタログからTypeScript API定義を自動生成するビルドタスクを追加
+- alpha.3は本番未導入
+
+## 2.0.0-alpha.2 — ARCSYS CORE
+
+- 既存72種を変更せず、73番目のLEGENDARY欠片 `ARCSYS_CORE`（Lv.1〜5）を追加
+- EXEC到達時のみArcVMを起動し、型付き入力・出力を次ノードへ伝播
+- PINNED/LATEST Revision紐付け、所有権検証、SQLite追加マイグレーション、監査ログ
+- レベル別VM燃料・効果数・MP・クールダウン・静的負荷と、TPS/同時実行/1tick効果上限
+- ArcVM完了まで効果を保留し、Paper側のEffect契約・保護・権限検証後に反映
+- Fabric専用制御パネル、Modなし/統合版向け管理コマンド、VS Code Core操作5種
+- 条件分岐、TTL状態記憶、センサー入力の`.arc`サンプル3種
+- 「ノードをしまう」を通常保存から分離し、不完全な編集中回路でも原子的に保管庫へ返却
+- 無属性の魔石を安全な譲渡可能アイテムへ変更。台帳所有権を所持者へ移し、旧複製品は拒否
+- Fabric Modでノード回路を`.arc`テキストとして出力・取込。欠片個体IDは再利用せず所持品へ再割当て
+- alpha.2は本番未導入。`arcsys.core.enabled`と本番効果は既定で無効
 
 ## 実装済み・自動検証済み
 
@@ -11,7 +47,7 @@
 - v1.6.0: Java版・統合版共通Web回路エディター連携と `/msf web`
 
 - Paper/Fabric/sharedのGradleマルチプロジェクト、Java 25
-- 72種を重複なく登録する欠片カタログ
+- 73種を重複なく登録する欠片カタログ（既存72種 + ARCSYS_CORE）
 - 型付きポート、循環、個数、上限、実行コストを検出するコンパイラ
 - PDC + HMAC-SHA256 + SQLite発行台帳による欠片認証
 - SQLite WAL、回路JSON、active回路、発動/強化監査、楽観ロック
@@ -25,7 +61,7 @@
 - 12属性の固有色と8形状の軌道を基礎に、分裂・追尾・貫通・連鎖・範囲・持続・増幅を反映する構成依存パーティクル
 - 1実行あたりの粒子上限と低TPS時の自動縮小（効果判定・ダメージは維持）
 - マウスホイールズーム、空白左ドラッグ/中クリックパン、Ctrl+Z/Ctrl+Y、ホバー詳細、クライアント即時検証、サーバー権威保存
-- 72種類すべての固有二つ名、色付きアイテム名、個別の効果説明
+- 73種類すべての固有二つ名、色付きアイテム名、個別の効果説明
 - Fabric UIのリアルタイム戦闘指標（攻撃力・DPS・連射力・消費魔力・防御貫通・確定ダメージ）
 - `ARMOR_PENETRATION` と `TRUE_DAMAGE` のサーバー権威型ダメージ処理
 - 検証レスポンスのJSONを画面へ露出せず、日本語の短いステータスとして表示
@@ -48,8 +84,8 @@
 
 ## 本番導入済み
 
-- Paper版 v1.5.1をメインサーバーへ導入し、69欠片登録・DB・魔術有効/無効切替・実行負荷上限512・Paper起動完了を確認
-- Fabric/Paper v1.5.1をGitHub Releaseへ公開し、GitHub Actions成功を確認
+- Paper版 2.0.0-alpha.1をメインサーバーへ導入し、72欠片登録・ArcSys基盤・Paper起動完了を確認
+- ARCSYS_COREを含む2.0.0-alpha.2は本番へ導入していない
 - 既存SQLiteの整合性確認済み、旧JAR・設定・DBのロールバックバックアップ取得済み
 
 ## 実機確認が必要

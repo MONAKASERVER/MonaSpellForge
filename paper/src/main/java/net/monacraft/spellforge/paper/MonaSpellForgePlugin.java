@@ -5,6 +5,7 @@ import net.monacraft.spellforge.api.FragmentService;
 import net.monacraft.spellforge.api.SpellService;
 import net.monacraft.spellforge.catalog.FragmentCatalog;
 import net.monacraft.spellforge.compiler.CircuitCompiler;
+import net.monacraft.spellforge.model.SpellModel.LevelParameters;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -13,6 +14,8 @@ import java.io.File;
 import java.nio.file.Files;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public final class MonaSpellForgePlugin extends JavaPlugin {
     private SpellDatabase database;
@@ -28,7 +31,7 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
             saveDefaultConfig();
             for (String name : new String[]{"runtime.yml","upgrade.yml","integrations.yml","messages_ja.yml","messages_en.yml"}) saveResourceIfMissing(name);
             ensureSecret();
-            FragmentCatalog catalog = FragmentCatalog.defaults();
+            FragmentCatalog catalog = configuredCatalog();
             CircuitCompiler compiler = new CircuitCompiler(catalog);
             database = new SpellDatabase(getDataFolder().toPath().resolve(getConfig().getString("database.file","monaspellforge.sqlite")));
             IntegrityService integrity = new IntegrityService(getConfig().getString("security.hmac-secret"));
@@ -42,11 +45,12 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
                     equipmentMana ? getConfig().getDouble("equipment-mana.maximum-mps-bonus",10000) : 0);
             if (getConfig().getBoolean("hud.enabled", true)) hud = new StatusHud(this, mana,
                     getConfig().getLong("hud.update-interval-ticks", 10), getConfig().getDouble("hud.vanilla-health-scale", 20.0));
-            spells = new DefaultSpellService(this,database,compiler,mana,new TickBudgetManager(getConfig().getDouble("runtime.minimum-tps",17),getConfig().getInt("runtime.max-runtime-cost",512)));
+            arcRuntime = new ArcRuntimeService(this, database, fragments, mana);
+            ArcCoreService arcCores = new ArcCoreService(this, database, arcRuntime, mana);
+            spells = new DefaultSpellService(this,database,compiler,mana,new TickBudgetManager(getConfig().getDouble("runtime.minimum-tps",17),getConfig().getInt("runtime.max-runtime-cost",512)),arcCores);
             editor = new EditorGui(fragments,circuits,embedding,spells,database);
             UpgradeService upgrades = new UpgradeService(this,fragments,database);
-            ArcSysService arcSys = new ArcSysService(database, fragments);
-            arcRuntime = new ArcRuntimeService(this, database, fragments, mana);
+            ArcSysService arcSys = new ArcSysService(database, fragments, arcCores);
             ProtocolBridge bridge = new ProtocolBridge(this,circuits,fragments,embedding,database,spells,arcSys);
             webEditor = new WebEditorBridge(this,circuits,fragments,embedding,database,catalog);
             NeutralMagicStoneService stones = new NeutralMagicStoneService(this,circuits,spells,database,integrity);
@@ -67,18 +71,33 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
             Bukkit.getPluginManager().registerEvents(arcRuntime,this);
             getServer().getMessenger().registerIncomingPluginChannel(this,ProtocolBridge.CHANNEL,bridge);
             getServer().getMessenger().registerOutgoingPluginChannel(this,ProtocolBridge.CHANNEL);
-            MsfCommand commands=new MsfCommand(this,fragments,circuits,spells,editor,bridge,webEditor,upgrades,stones,swords,database,arcRuntime);
+            MsfCommand commands=new MsfCommand(this,fragments,circuits,spells,editor,bridge,webEditor,upgrades,stones,swords,database,arcRuntime,arcCores);
             getCommand("msf").setExecutor(commands);getCommand("msf").setTabCompleter(commands);
             Bukkit.getScheduler().runTaskTimer(this,()->editor.cleanup(getConfig().getLong("editor.session-timeout-seconds",900)*1000L),1200L,1200L);
             Bukkit.getScheduler().runTaskTimer(this,()->database.cleanupExpiredArcState(System.currentTimeMillis(),1000),1200L,1200L);
             Bukkit.getScheduler().runTaskTimer(this,arcRuntime::tick,1L,1L);
-            getLogger().info("MonaSpellForge enabled: 72 fragments, protocol v1, database ready");
+            getLogger().info("MonaSpellForge enabled: 73 fragments, protocol v1, database ready; ARCSYS_CORE=" + (arcCores.enabled() ? "enabled" : "disabled"));
         } catch (Exception error) {
             getLogger().severe("MonaSpellForge could not start: "+error.getMessage());error.printStackTrace();Bukkit.getPluginManager().disablePlugin(this);
         }
     }
     @Override public void onDisable(){if(webEditor!=null)webEditor.close();if(arcRuntime!=null)arcRuntime.close();if(spells!=null)spells.cancelAll();if(hud!=null)hud.close();if(mana!=null)mana.close();if(database!=null)try{database.close();}catch(Exception e){getLogger().warning("DB close failed: "+e.getMessage());}}
     private void saveResourceIfMissing(String name){if(!new File(getDataFolder(),name).exists())saveResource(name,false);}
+    private FragmentCatalog configuredCatalog() {
+        FragmentCatalog base = FragmentCatalog.defaults();
+        Map<Integer, LevelParameters> levels = new LinkedHashMap<>();
+        for (int level = 1; level <= 5; level++) {
+            LevelParameters defaults = base.get("ARCSYS_CORE").levels().get(level);
+            String root = "arcsys.core.levels." + level + ".";
+            double fuel = Math.max(1, getConfig().getDouble(root + "fuel", defaults.power()));
+            double effects = Math.max(0, getConfig().getDouble(root + "max-effects", defaults.range()));
+            double cooldown = Math.max(1, getConfig().getDouble(root + "cooldown-ticks", defaults.duration()));
+            double mana = Math.max(0, getConfig().getDouble(root + "mana", defaults.manaCost()));
+            int load = Math.max(1, Math.min(512, getConfig().getInt(root + "static-load", defaults.runtimeCost())));
+            levels.put(level, new LevelParameters(fuel, effects, cooldown, mana, load));
+        }
+        return base.withArcSysCoreLevels(levels);
+    }
     private void ensureSecret() throws Exception {
         if(!getConfig().getString("security.hmac-secret","").isBlank())return;
         byte[] bytes=new byte[32];new SecureRandom().nextBytes(bytes);getConfig().set("security.hmac-secret",Base64.getEncoder().encodeToString(bytes));saveConfig();

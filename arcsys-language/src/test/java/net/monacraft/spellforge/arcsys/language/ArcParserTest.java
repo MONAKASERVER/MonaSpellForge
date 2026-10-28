@@ -137,6 +137,48 @@ class ArcParserTest {
         assertTrue(diagnostics.stream().anyMatch(d -> d.code().equals("ARC-T5009")));
     }
 
+    @Test void preservesAndChecksTypedFunctionSignatures() {
+        var valid = ArcParser.parse("""
+            fn distance_ok(value: Distance) -> Distance { return value; }
+            spell X { on cast { let radius: Distance = distance_ok(8b); } }
+            """);
+        assertTrue(valid.valid(), () -> valid.diagnostics().toString());
+        FunctionDecl function = valid.program().spells().getFirst().functions().getFirst();
+        assertEquals("Distance", function.parameterTypes().get("value"));
+        assertEquals("Distance", function.returnType());
+        assertTrue(new ArcTypeChecker().check(valid.program()).stream().noneMatch(d -> d.severity() == SourceModel.Severity.ERROR));
+
+        var invalid = ArcParser.parse("fn bad(value: Entity) -> Bool { return value; } spell X { on cast { bad(4); } }");
+        var diagnostics = new ArcTypeChecker().check(invalid.program());
+        assertTrue(diagnostics.stream().anyMatch(d -> d.code().equals("ARC-T5021")));
+        assertTrue(diagnostics.stream().anyMatch(d -> d.code().equals("ARC-T5038")));
+
+        var fallthrough = ArcParser.parse("fn maybe(value: Bool) -> Int { if (value) { return 1; } } spell X { on cast {} }");
+        assertTrue(new ArcTypeChecker().check(fallthrough.program()).stream().anyMatch(d -> d.code().equals("ARC-T5041")));
+    }
+
+    @Test void rejectsUndefinedVariablesAndMutationWithoutMut() {
+        var parsed = ArcParser.parse("spell X { on cast { let fixed = 1; fixed = 2; return missing; } }");
+        var diagnostics = new ArcTypeChecker().check(parsed.program());
+        assertTrue(diagnostics.stream().anyMatch(d -> d.code().equals("ARC-T5025")));
+        assertTrue(diagnostics.stream().anyMatch(d -> d.code().equals("ARC-T5023")));
+
+        var mutable = ArcParser.parse("spell X { on cast { let mut count: Int = 1; count = 2; } }");
+        assertTrue(new ArcTypeChecker().check(mutable.program()).stream().noneMatch(d -> d.severity() == SourceModel.Severity.ERROR));
+    }
+
+    @Test void validatesMagicApiNamedArgumentsAndGenericResultTypes() {
+        var parsed = ArcParser.parse("""
+            fn inspect() -> Result<Any, String> { return combat.damage(target, 4); }
+            spell X { on cast { let mobs = mobs.hostile(radius: 8b, limit: 4); } }
+            """);
+        var diagnostics = new ArcTypeChecker().check(parsed.program());
+        assertTrue(diagnostics.stream().noneMatch(d -> d.severity() == SourceModel.Severity.ERROR), diagnostics.toString());
+
+        var bad = ArcParser.parse("spell X { on cast { mobs.hostile(raduis: 8b); } }");
+        assertTrue(new ArcTypeChecker().check(bad.program()).stream().anyMatch(d -> d.code().equals("ARC-T5029")));
+    }
+
     @Test void parsesSkriptStyleCombatAndPeriodicSyntax() {
         var result = ArcParser.parse("""
             spell HELLFIRE_COUNTER {
@@ -151,5 +193,32 @@ class ArcParserTest {
             }
             """);
         assertTrue(result.valid(), () -> result.diagnostics().toString());
+    }
+
+    @Test void parsesModulesStructsEnumsAndChecksExhaustiveMatch() {
+        var parsed = ArcParser.parse("""
+            module monaka.combat;
+            use monaka.shared as shared;
+            struct TargetInfo { target: Entity, power: Number }
+            enum Decision { Strike(TargetInfo), Wait }
+            spell X { on cast {
+              let info: TargetInfo = TargetInfo(target: target, power: 4);
+              let decision: Decision = Decision::Strike(info);
+              return match decision {
+                Decision::Strike(value) => value.power,
+                Decision::Wait => 0
+              };
+            } }
+            """);
+        assertTrue(parsed.valid(), () -> parsed.diagnostics().toString());
+        assertEquals("monaka.combat", parsed.program().module().name());
+        assertEquals("shared", parsed.program().imports().getFirst().alias());
+        assertEquals(2, parsed.program().types().size());
+        assertTrue(new ArcTypeChecker().check(parsed.program()).stream()
+                .noneMatch(d -> d.severity() == SourceModel.Severity.ERROR),
+                () -> new ArcTypeChecker().check(parsed.program()).toString());
+
+        var nonExhaustive = ArcParser.parse("enum Mode { A, B } spell X { on cast { let m: Mode = Mode::A; return match m { Mode::A => 1 }; } }");
+        assertTrue(new ArcTypeChecker().check(nonExhaustive.program()).stream().anyMatch(d -> d.code().equals("ARC-TW5014")));
     }
 }

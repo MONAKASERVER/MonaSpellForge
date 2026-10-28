@@ -34,12 +34,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('arcsys.compile', () => sourceRequest('compile'));
   register('arcsys.deploy', () => sourceRequest('deploy'));
   register('arcsys.simulate', () => sourceRequest('simulate'));
+  register('arcsys.profile', () => sourceRequest('profile'));
   register('arcsys.debug', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'arcsys') throw new Error('ArcSys (.arc) ファイルを開いてください');
     const watchesRaw = await vscode.window.showInputBox({ title: 'ArcSys Watch', prompt: '監視する変数名（カンマ区切り、省略可）' });
     const result = await requireBridge().request('debugStart', {
-      source: editor.document.getText(), watches: (watchesRaw ?? '').split(',').map(v => v.trim()).filter(Boolean), breakpoints: []
+      ...(await projectPayload(editor.document)), watches: (watchesRaw ?? '').split(',').map(v => v.trim()).filter(Boolean), breakpoints: []
     }) as { debugSessionId?: string };
     debugSessionId = result.debugSessionId; showDebugResult('start', result);
   });
@@ -52,6 +53,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   register('arcsys.openGraph', () => sourceRequest('nodeGraph'));
   register('arcsys.logs', async () => { const result = await requireBridge().request('logs', {}); output.appendLine(JSON.stringify(result, null, 2)); output.show(true); });
+  register('arcsys.listCores', async () => showCoreResult('list', await requireBridge().request('listCores', {})));
+  register('arcsys.inspectCore', async () => {
+    const core = await pickCore(); if (!core) return;
+    showCoreResult('inspect', await requireBridge().request('inspectCore', { circuitId: core.circuitId, nodeId: core.nodeId }));
+  });
+  register('arcsys.validateCoreBinding', async () => {
+    const core = await pickCore(); if (!core) return;
+    showCoreResult('validate', await requireBridge().request('validateCoreBinding', { circuitId: core.circuitId, nodeId: core.nodeId }));
+  });
+  register('arcsys.unbindCore', async () => {
+    const core = await pickCore(); if (!core) return;
+    await requireBridge().request('unbindCore', { circuitId: core.circuitId, nodeId: core.nodeId });
+    vscode.window.showInformationMessage('ARCSYS_COREの紐付けを解除しました'); await refreshStudio(studio);
+  });
+  register('arcsys.bindCore', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'arcsys') throw new Error('紐付けるArcSys (.arc) ファイルを開いてください');
+    const metadata = spellMetadata.get(editor.document.uri.toString());
+    if (!metadata) throw new Error('先にArcSys: Deploy Spell to Minecraftを実行してください');
+    const result = await requireBridge().request('listCores', {}) as { cores?: CoreInfo[] };
+    const core = await vscode.window.showQuickPick((result.cores ?? []).map(value => ({
+      label: `${value.circuit} / ARCSYS_CORE Lv.${value.level}`, description: value.nodeId, value
+    })), { title: '紐付ける術式演算核' });
+    if (!core) return;
+    const mode = await vscode.window.showQuickPick(['PINNED', 'LATEST'] as const, { title: 'Revision方式' });
+    if (!mode) return;
+    const bound = await requireBridge().request('bindCore', { circuitId: core.value.circuitId, nodeId: core.value.nodeId,
+      spellId: metadata.spellId, revision: metadata.revision, mode });
+    showCoreResult('bind', bound); await refreshStudio(studio);
+  });
   register('arcsys.openSpell', async () => {
     const result = await requireBridge().request('listSpells', {}) as { spells?: Array<{ id: string; name: string }> };
     const selected = await vscode.window.showQuickPick((result.spells ?? []).map(s => ({ label: s.name, id: s.id })), { title: 'Minecraftから開く魔術' });
@@ -62,12 +93,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await vscode.window.showTextDocument(document);
   });
 
-  async function sourceRequest(type: 'validate' | 'compile' | 'deploy' | 'simulate' | 'debugStart' | 'nodeGraph'): Promise<void> {
+  async function sourceRequest(type: 'validate' | 'compile' | 'deploy' | 'simulate' | 'profile' | 'debugStart' | 'nodeGraph'): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'arcsys') throw new Error('ArcSys (.arc) ファイルを開いてください');
     const metadata = spellMetadata.get(editor.document.uri.toString());
     const result = await requireBridge().request(type, {
-      source: editor.document.getText(), uri: editor.document.uri.toString(), explicit: true,
+      ...(await projectPayload(editor.document)), uri: editor.document.uri.toString(), explicit: true,
       spellId: metadata?.spellId, baseRevision: metadata?.revision ?? 0
     }) as { spellId?: string; revision?: number };
     if (type === 'deploy' && result.spellId && result.revision !== undefined)
@@ -77,12 +108,47 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (type === 'deploy') await refreshStudio(studio);
   }
 
+  async function projectPayload(document: vscode.TextDocument): Promise<Record<string, unknown>> {
+    const source = document.getText();
+    const rootModule = moduleName(source) ?? path.basename(document.fileName, '.arc');
+    if (document.uri.scheme !== 'file' || !/\buse\s+[A-Za-z_][\w.]*/.test(source)) return { source };
+    const modules: Record<string, string> = {};
+    const files = await vscode.workspace.findFiles('**/*.arc', '**/{node_modules,.git,build,out}/**', 32);
+    for (const uri of files) {
+      const candidate = await vscode.workspace.openTextDocument(uri); const text = candidate.getText();
+      const name = moduleName(text);
+      if (name) modules[name] = text;
+    }
+    modules[rootModule] = source;
+    const payload = { source, rootModule, modules };
+    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > 55_000)
+      throw new Error('ArcSys projectがFabric Bridgeの転送上限を超えています');
+    return payload;
+  }
+
+  function moduleName(source: string): string | undefined {
+    return /^\s*module\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)\s*;/m.exec(source)?.[1];
+  }
+
   async function continueDebug(mode: 'continue' | 'step'): Promise<void> {
     if (!debugSessionId) throw new Error('ArcSys: Start Debuggingを先に実行してください');
     const result = await requireBridge().request('debugContinue', { debugSessionId, mode }) as { status?: string };
     showDebugResult(mode, result);
     if (result.status === 'COMPLETED' || result.status === 'TRAPPED' || result.status === 'STOPPED') debugSessionId = undefined;
   }
+
+  async function pickCore(): Promise<CoreInfo | undefined> {
+    const result = await requireBridge().request('listCores', {}) as { cores?: CoreInfo[] };
+    const selected = await vscode.window.showQuickPick((result.cores ?? []).map(value => ({
+      label: `${value.circuit} / ${value.program}`, description: `${value.status} · ${value.nodeId}`, value
+    })), { title: '術式演算核を選択' });
+    return selected?.value;
+  }
+}
+
+interface CoreInfo { circuitId: string; nodeId: string; circuit: string; program: string; level: number; status: string }
+function showCoreResult(action: string, result: unknown): void {
+  output.appendLine(`[${new Date().toISOString()}] core:${action}\n${JSON.stringify(result, null, 2)}`); output.show(true);
 }
 
 function requireBridge(): FabricBridge { if (!bridge?.connected) throw new Error('先に ArcSys: Connect to Minecraft を実行してください'); return bridge; }

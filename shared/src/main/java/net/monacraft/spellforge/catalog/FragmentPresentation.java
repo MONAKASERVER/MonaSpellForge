@@ -123,6 +123,7 @@ public final class FragmentPresentation {
         put(values, "ENVIRONMENT_OBSERVER", "&2万象観測《ラプラス・アイ》", "敵HP・距離・周囲の敵数を取得", "環境 観測 HP 距離 敵数");
         put(values, "TIMER", "&9刻限計測《クロノス・ウォッチ》", "指定秒後に後続術式を実行", "時間 計測 秒 遅延");
         put(values, "PERIODIC_SIGNAL", "&e周期信号《パルス・ジェネシス》", "一定間隔で後続術式を反復実行", "周期 信号 間隔 自動");
+        put(values, "ARCSYS_CORE", "&5術式演算核《アルカナ・プロセッサ》", "検証済みArcSysプログラムを回路信号から安全に実行", "ArcSys CORE 演算 プログラム VS Code 論理");
 
         return Map.copyOf(values);
     }

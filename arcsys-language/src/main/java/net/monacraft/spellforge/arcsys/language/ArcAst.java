@@ -9,12 +9,35 @@ import java.util.Map;
 public final class ArcAst {
     private ArcAst() { }
 
-    public sealed interface Node permits Program, SpellDecl, FunctionDecl, HandlerDecl, Stmt, Expr {
+    public sealed interface Node permits Program, ModuleDecl, UseDecl, TypeDecl, SpellDecl, FunctionDecl, HandlerDecl, Stmt, Expr {
         Span span();
     }
 
-    public record Program(List<SpellDecl> spells, Span span) implements Node {
-        public Program { spells = List.copyOf(spells); }
+    public record Program(ModuleDecl module, List<UseDecl> imports, List<TypeDecl> types,
+                          List<VarDecl> globalConstants, List<FunctionDecl> globalFunctions,
+                          List<SpellDecl> spells, Span span) implements Node {
+        public Program {
+            imports = List.copyOf(imports); types = List.copyOf(types);
+            globalConstants = List.copyOf(globalConstants); globalFunctions = List.copyOf(globalFunctions);
+            spells = List.copyOf(spells);
+        }
+        public Program(ModuleDecl module, List<UseDecl> imports, List<TypeDecl> types, List<SpellDecl> spells, Span span) {
+            this(module, imports, types, List.of(), List.of(), spells, span);
+        }
+        public Program(List<SpellDecl> spells, Span span) { this(null, List.of(), List.of(), List.of(), List.of(), spells, span); }
+    }
+
+    public record ModuleDecl(String name, Span span) implements Node { }
+    public record UseDecl(String module, String alias, Span span) implements Node { }
+
+    public sealed interface TypeDecl extends Node permits StructDecl, EnumDecl { String name(); }
+    public record FieldDecl(String name, String type, Span span) { }
+    public record StructDecl(String name, List<FieldDecl> fields, Span span) implements TypeDecl {
+        public StructDecl { fields = List.copyOf(fields); }
+    }
+    public record EnumVariantDecl(String name, String payloadType, Span span) { }
+    public record EnumDecl(String name, List<EnumVariantDecl> variants, Span span) implements TypeDecl {
+        public EnumDecl { variants = List.copyOf(variants); }
     }
 
     public record SpellDecl(String name, Map<String, Integer> requiredFragments, List<String> requiredPermissions,
@@ -36,11 +59,19 @@ public final class ArcAst {
         }
     }
 
-    public record FunctionDecl(String name, List<String> parameters, boolean effectful,
+    public record FunctionDecl(String name, List<String> parameters, Map<String, String> parameterTypes,
+                               String returnType, boolean effectful,
                                java.util.Set<String> declaredEffects, Block body, Span span) implements Node {
-        public FunctionDecl { parameters = List.copyOf(parameters); declaredEffects = java.util.Set.copyOf(declaredEffects); }
+        public FunctionDecl {
+            parameters = List.copyOf(parameters); parameterTypes = Map.copyOf(parameterTypes);
+            declaredEffects = java.util.Set.copyOf(declaredEffects);
+        }
+        public FunctionDecl(String name, List<String> parameters, boolean effectful,
+                            java.util.Set<String> declaredEffects, Block body, Span span) {
+            this(name, parameters, Map.of(), null, effectful, declaredEffects, body, span);
+        }
         public FunctionDecl(String name, List<String> parameters, Block body, Span span) {
-            this(name, parameters, false, java.util.Set.of(), body, span);
+            this(name, parameters, Map.of(), null, false, java.util.Set.of(), body, span);
         }
     }
 
@@ -66,8 +97,14 @@ public final class ArcAst {
         }
     }
 
-    public record VarDecl(Binding binding, String name, Expr initializer, Persistence persistence, Span span) implements Stmt {
-        public VarDecl(Binding binding, String name, Expr initializer, Span span) { this(binding, name, initializer, null, span); }
+    public record VarDecl(Binding binding, String name, String declaredType, boolean mutable,
+                          Expr initializer, Persistence persistence, Span span) implements Stmt {
+        public VarDecl(Binding binding, String name, Expr initializer, Persistence persistence, Span span) {
+            this(binding, name, null, binding == Binding.STATE, initializer, persistence, span);
+        }
+        public VarDecl(Binding binding, String name, Expr initializer, Span span) {
+            this(binding, name, null, binding == Binding.STATE, initializer, null, span);
+        }
     }
     public record IfStmt(Expr condition, Block thenBranch, Block elseBranch, Span span) implements Stmt { }
     public record ForStmt(String variable, Expr iterable, Block body, Span span) implements Stmt { }

@@ -30,6 +30,25 @@ arc-runtime:
     max-displays-per-segment: 8
     max-pdc-writes-per-segment: 8
     max-skript-signals-per-segment: 4
+arcsys:
+  core:
+    enabled: false
+    allow-production-effects: false
+    require-owner: true
+    prevent-cross-player-binding: true
+    max-level: 5
+    max-active-executions-per-player: 2
+    max-active-executions-global: 64
+    max-effects-per-tick: 64
+    default-binding-mode: PINNED
+    log-executions: true
+    minimum-tps: 17.0
+    levels:
+      1: {fuel: 64, max-effects: 2, mana: 40, cooldown-ticks: 80, static-load: 12}
+      2: {fuel: 96, max-effects: 3, mana: 55, cooldown-ticks: 70, static-load: 16}
+      3: {fuel: 128, max-effects: 4, mana: 75, cooldown-ticks: 60, static-load: 24}
+      4: {fuel: 192, max-effects: 6, mana: 100, cooldown-ticks: 50, static-load: 32}
+      5: {fuel: 256, max-effects: 8, mana: 130, cooldown-ticks: 40, static-load: 40}
 particles:
   enabled: true
   # 1回の実行に許可する最大粒子数。反復・周期実行では実行ごとに適用。

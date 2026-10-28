@@ -74,6 +74,22 @@ class SpellDatabaseTest {
         }
     }
 
+    @Test void neutralStoneCustodyCanTransferOnceWithoutWeakeningTheLedger() throws Exception {
+        UUID original = UUID.randomUUID(), recipient = UUID.randomUUID(), attacker = UUID.randomUUID();
+        UUID stone = UUID.randomUUID();
+        try (SpellDatabase database = new SpellDatabase(temp.resolve("stone-transfer.sqlite"))) {
+            database.registerNeutralStone(stone, original, 5, "test", 1234L);
+            assertTrue(database.transferNeutralStone(stone, original, recipient, 5));
+            assertEquals(recipient, database.neutralStone(stone).orElseThrow().ownerId());
+            assertFalse(database.transferNeutralStone(stone, original, attacker, 5),
+                    "an old copied item cannot transfer custody after the ledger moved");
+            Circuit recipientCircuit = database.save(Circuit.empty(recipient), 0);
+            assertTrue(database.bindNeutralStone(stone, recipient, recipientCircuit));
+            assertFalse(database.consumeNeutralStone(stone, original, 5));
+            assertTrue(database.consumeNeutralStone(stone, recipient, 5));
+        }
+    }
+
     @Test void recoversSignedNeutralStoneOnlyWhenLedgerRowIsMissing() throws Exception {
         UUID owner = UUID.randomUUID();
         UUID stone = UUID.randomUUID();
@@ -142,6 +158,28 @@ class SpellDatabaseTest {
             database.putArcState(owner, spell, "name", "SPELL", "arc", 1, null);
             assertEquals(2, database.eraseArcStateOwner(owner));
             assertTrue(database.arcState(owner, spell, "hits", "PLAYER", now).isEmpty());
+        }
+    }
+
+    @Test void arcCoreBindingIsOwnerScopedRevisionPinnedAndPrunedWithNode() throws Exception {
+        UUID owner = UUID.randomUUID(), instance = UUID.randomUUID(), nodeId = UUID.randomUUID();
+        try (SpellDatabase database = new SpellDatabase(temp.resolve("arc-core.sqlite"))) {
+            Circuit empty = Circuit.empty(owner);
+            CircuitNode core = new CircuitNode(nodeId, 0, instance, "ARCSYS_CORE", 3, Map.of(), 0, 0);
+            Circuit saved = database.save(new Circuit(empty.circuitId(), owner, "core", 0, 1,
+                    List.of(core), List.of(), empty.createdAt(), empty.updatedAt()), 0);
+            var rev1 = database.deployArcSpell(owner, null, 0, "CoreLogic", "spell CoreLogic { on cast {} }",
+                    "hash-1", new byte[]{1}, "", "");
+            database.deployArcSpell(owner, rev1.spellId(), 1, "CoreLogic", "spell CoreLogic { on cast { let x = 1; } }",
+                    "hash-2", new byte[]{2}, "", "");
+            var binding = database.saveArcCoreBinding(new SpellDatabase.ArcCoreBinding(UUID.randomUUID(), owner,
+                    saved.circuitId(), nodeId, instance, rev1.spellId(), 1L, "PINNED", 1, 0, 0));
+            assertEquals(1, database.arcCoreBinding(saved.circuitId(), nodeId).orElseThrow().pinnedRevision());
+            assertEquals("hash-1", database.arcSpell(binding.spellId(), owner, binding.pinnedRevision()).orElseThrow().sourceHash());
+            Circuit withoutCore = new Circuit(saved.circuitId(), owner, saved.name(), saved.revision(), 1,
+                    List.of(), List.of(), saved.createdAt(), saved.updatedAt());
+            database.save(withoutCore, saved.revision());
+            assertTrue(database.arcCoreBinding(saved.circuitId(), nodeId).isEmpty());
         }
     }
 }

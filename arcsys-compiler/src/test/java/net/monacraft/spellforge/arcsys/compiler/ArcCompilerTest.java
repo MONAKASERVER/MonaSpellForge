@@ -2,6 +2,8 @@ package net.monacraft.spellforge.arcsys.compiler;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class ArcCompilerTest {
@@ -98,5 +100,21 @@ class ArcCompilerTest {
             """);
         assertTrue(result.valid(), () -> result.diagnostics().toString());
         assertTrue(result.program().instructions().stream().anyMatch(i -> i.op() == ArcBytecode.Op.CALL && i.text().equals("double_it")));
+    }
+
+    @Test void linksImportedModulesAndProducesSourceMap() {
+        Map<String, String> modules = Map.of(
+                "magic.math", "module magic.math; fn double_it(value: Int) -> Int { return value * 2; }",
+                "main", "module main; use magic.math as math; spell X { on cast { return math.double_it(4); } }"
+        );
+        var result = new ArcProjectCompiler().compile(modules, "main");
+        assertTrue(result.valid(), () -> result.diagnostics().toString());
+        assertFalse(result.program().sourceMap().isEmpty());
+        assertTrue(result.program().sourceMap().values().stream().anyMatch(site -> site.module().equals("main")));
+        assertTrue(result.program().sourceMap().values().stream().anyMatch(site -> site.module().equals("magic.math")));
+
+        String bundle = ArcProjectCompiler.encodeBundle(modules, "main");
+        assertEquals(modules, ArcProjectCompiler.decodeBundle(bundle).modules());
+        assertTrue(new ArcProjectCompiler().compileStored(bundle).valid());
     }
 }

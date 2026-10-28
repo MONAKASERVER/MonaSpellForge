@@ -21,6 +21,7 @@ class SpellForgeProtocolTest {
         assertEquals(2, SpellForgeProtocol.Type.OPEN_EDITOR.ordinal());
         assertEquals(11, SpellForgeProtocol.Type.PING.ordinal());
         assertEquals(12, SpellForgeProtocol.Type.EDITOR_DATA.ordinal());
+        assertEquals(21, SpellForgeProtocol.Type.STOW_NODE_REQ.ordinal());
         var frame = new SpellForgeProtocol.Frame(SpellForgeProtocol.Type.EDITOR_DATA, UUID.randomUUID(),
                 "token", UUID.randomUUID(), 7, "{\"fragments\":[]}");
         assertEquals(frame, SpellForgeProtocol.decode(SpellForgeProtocol.encode(frame)));

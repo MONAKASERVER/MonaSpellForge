@@ -4,6 +4,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.metadata.MetadataValue;
 
 import java.lang.reflect.Method;
@@ -32,6 +33,13 @@ final class ArcProtectionAdapters {
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return false;
         }
+    }
+
+    boolean canAffect(Player player, LivingEntity target) {
+        if (target == null || target == player || !target.isValid() || target.isDead() || target.getWorld() != player.getWorld()) return false;
+        if (target instanceof Player && !target.getWorld().getPVP()) return false;
+        // Region damage/build policies differ, but failing closed on protected locations prevents ArcSys bypasses.
+        return canBuild(player, target.getLocation());
     }
 
     String mythicType(Entity entity) {

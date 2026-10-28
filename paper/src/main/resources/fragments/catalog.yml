@@ -1,4 +1,4 @@
-schema-version: 2
+schema-version: 3
 # Built-in defaults remain authoritative when a future override omits a field.
 fragments:
   # Triggers (6)
@@ -52,7 +52,7 @@ fragments:
   CIRCUIT_SPEED: {category: MODIFIER, max-level: 4, rarity: RARE}
   ARMOR_PENETRATION: {category: MODIFIER, max-level: 5, rarity: EPIC}
   TRUE_DAMAGE: {category: MODIFIER, max-level: 5, rarity: EPIC}
-  # Logic (26)
+  # Logic (27)
   FORK: {category: LOGIC, max-level: 5, rarity: EPIC}
   MERGE_ANY: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
   MERGE_ALL: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
@@ -79,3 +79,4 @@ fragments:
   ENVIRONMENT_OBSERVER: {category: LOGIC, max-level: 3, rarity: UNCOMMON}
   TIMER: {category: LOGIC, max-level: 5, rarity: EPIC}
   PERIODIC_SIGNAL: {category: LOGIC, max-level: 5, rarity: EPIC}
+  ARCSYS_CORE: {category: LOGIC, max-level: 5, rarity: LEGENDARY}

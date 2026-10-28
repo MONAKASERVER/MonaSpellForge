@@ -1,6 +1,6 @@
 # MonaSpellForge
 
-Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。72種類の欠片、回路検証、SQLite永続化、HMAC付き欠片、発動、強化、バニラGUI、Fabric専用表示を1プロジェクトで管理します。
+Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.4ではArcSysへユーザー定義`struct / enum`、複数module/import、ソースマップ、ArcVMプロファイラー、可逆な`.arc`―ノード回路変換を追加しました。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
 
 v1.7.0ではFabricエディター下部に攻撃力・DPS・連射力・消費魔力のリアルタイム戦闘指標を追加しました。新しい術式強化として、低負荷で防御を15～55%貫通する `ARMOR_PENETRATION` と、莫大な魔力・実行負荷を使って確定ダメージを与える `TRUE_DAMAGE` を追加しています。
 
@@ -49,7 +49,7 @@ Java版・統合版共通のWebエディターは、ゲーム内で `/msf web` �
 
 ## 最短の試し方
 
-1. OPが `/msf fragment give <player> FIRE 1 1` の形式で欠片を発行します。
+1. OPが `/msf fragment give <player> FIRE 1 1` の形式で欠片を発行します。術式演算核は `/msf fragment give <player> ARCSYS_CORE 1 1`（Lv.5ならレベルを5）です。
 2. 必要なTRIGGER / ELEMENT / TARGET / SHAPE欠片を所持します。
 3. プレイヤーが `/msf open` を実行し、Mod画面の「所持ノード」または中央5×5へ配置します。
 4. 「検証」後、「保存して有効化」を押します。

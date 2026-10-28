@@ -15,7 +15,8 @@ public final class SpellForgeProtocol {
         SAVE_REQ, SAVE_RESULT, CONFLICT, ERROR, PING, EDITOR_DATA,
         CIRCUIT_LIBRARY, CIRCUIT_LIBRARY_REQ, CIRCUIT_OPEN_REQ, CIRCUIT_CREATE_REQ, CIRCUIT_DELETE_REQ,
         CIRCUIT_TOGGLE_REQ,
-        ARC_REQUEST, ARC_RESPONSE
+        ARC_REQUEST, ARC_RESPONSE,
+        STOW_NODE_REQ
     }
     public record Frame(Type type, UUID requestId, String sessionToken, UUID circuitId, long baseRevision, String payload) {}
 

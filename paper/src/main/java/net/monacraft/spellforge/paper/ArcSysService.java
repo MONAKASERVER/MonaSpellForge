@@ -3,6 +3,8 @@ package net.monacraft.spellforge.paper;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.monacraft.spellforge.arcsys.compiler.ArcCompiler;
+import net.monacraft.spellforge.arcsys.compiler.ArcProjectCompiler;
+import net.monacraft.spellforge.arcsys.vm.ArcProfiler;
 import net.monacraft.spellforge.arcsys.vm.ArcVm;
 import org.bukkit.entity.Player;
 import net.monacraft.spellforge.api.FragmentService;
@@ -15,9 +17,13 @@ final class ArcSysService {
     private final SpellDatabase database;
     private final FragmentService fragments;
     private final ArcCompiler compiler = new ArcCompiler();
+    private final ArcProjectCompiler projectCompiler = new ArcProjectCompiler();
+    private final ArcCoreService cores;
     private final Map<UUID, DebugSession> debugSessions = new HashMap<>();
 
-    ArcSysService(SpellDatabase database, FragmentService fragments) { this.database = database; this.fragments = fragments; }
+    ArcSysService(SpellDatabase database, FragmentService fragments, ArcCoreService cores) {
+        this.database = database; this.fragments = fragments; this.cores = cores;
+    }
 
     JsonObject handle(Player player, String type, JsonObject payload) {
         return switch (type) {
@@ -26,6 +32,7 @@ final class ArcSysService {
             case "validate", "compile" -> compile(payload);
             case "deploy" -> deploy(player, payload);
             case "simulate" -> simulate(player, payload);
+            case "profile" -> simulate(player, payload);
             case "debugStart" -> debugStart(player, payload);
             case "debugContinue" -> debugContinue(player, payload);
             case "debugState" -> debugState(player, payload);
@@ -33,13 +40,18 @@ final class ArcSysService {
             case "nodeGraph" -> graph(payload);
             case "logs" -> logs(player);
             case "studioSnapshot" -> studio(player);
+            case "listCores" -> listCores(player);
+            case "inspectCore" -> inspectCore(player, payload);
+            case "bindCore" -> bindCore(player, payload);
+            case "unbindCore" -> unbindCore(player, payload);
+            case "validateCoreBinding" -> validateCore(player, payload);
+            case "simulateCore" -> simulateCore(player, payload);
             default -> throw new ArcRequestException("UNKNOWN_REQUEST", "未知のArcSys要求です");
         };
     }
 
     private JsonObject compile(JsonObject payload) {
-        String source = source(payload);
-        var result = compiler.compile(source);
+        var result = compilePayload(payload);
         JsonObject response = diagnostics(result);
         if (result.valid()) {
             response.addProperty("spell", result.program().spellName());
@@ -48,14 +60,15 @@ final class ArcSysService {
             response.addProperty("hash", result.program().sha256());
             response.add("capabilities", strings(result.program().capabilities()));
             response.add("requirements", strings(result.program().requirements()));
+            addSourceMap(response, result.program());
         }
         return response;
     }
 
     private JsonObject deploy(Player player, JsonObject payload) {
         if (!player.hasPermission("monaspellforge.arcsys.deploy")) throw new ArcRequestException("NO_PERMISSION", "デプロイ権限がありません");
-        String source = source(payload);
-        var result = compiler.compile(source);
+        String source = storedSource(payload);
+        var result = projectCompiler.compileStored(source);
         if (!result.valid()) return diagnostics(result);
         verifyRequirements(player, result.program().requirements());
         if (result.program().capabilities().stream().anyMatch(capability -> capability.startsWith("operator."))
@@ -78,27 +91,30 @@ final class ArcSysService {
 
     private JsonObject simulate(Player player, JsonObject payload) {
         if (!player.hasPermission("monaspellforge.arcsys.debug")) throw new ArcRequestException("NO_PERMISSION", "デバッグ権限がありません");
-        var compiled = compiler.compile(source(payload));
+        var compiled = compilePayload(payload);
         JsonObject response = diagnostics(compiled);
         if (!compiled.valid()) return response;
         String entry = compiled.program().entryPoints().keySet().stream().sorted().findFirst().orElseThrow();
-        ArcVm vm = new ArcVm();
-        ArcVm.Result result = vm.run(compiled.program(), entry, Map.of(), ArcVm.Limits.production(), new SimulationHost());
+        ArcVm vm = new ArcVm(); SimulationHost simulation = new SimulationHost();
+        ArcProfiler profiler = new ArcProfiler(compiled.program(), simulation);
+        ArcVm.Result result = vm.run(compiled.program(), entry, Map.of(), ArcVm.Limits.production(), profiler);
         long virtualTicks = 0;
         while (result.status() == ArcVm.Status.SUSPENDED && result.continuation().suspensionCount() <= ArcVm.MAX_SUSPENSIONS) {
             virtualTicks += result.resumeAfterTicks();
-            result = vm.resume(compiled.program(), result.continuation(), ArcVm.Limits.production(), new SimulationHost());
+            result = vm.resume(compiled.program(), result.continuation(), ArcVm.Limits.production(), profiler);
         }
         response.addProperty("status", result.status().name()); response.addProperty("fuelUsed", result.fuelUsed());
         response.addProperty("virtualTicks", virtualTicks);
         response.addProperty("runtimeCode", result.code()); response.addProperty("runtimeMessage", result.message());
         response.add("effects", new com.google.gson.Gson().toJsonTree(result.effects()));
+        response.add("profile", new com.google.gson.Gson().toJsonTree(profiler.snapshot()));
+        addSourceMap(response, compiled.program());
         return response;
     }
 
     private JsonObject debugStart(Player player, JsonObject payload) {
         requireDebug(player);
-        var compiled = compiler.compile(source(payload));
+        var compiled = compilePayload(payload);
         JsonObject response = diagnostics(compiled);
         if (!compiled.valid()) return response;
         if (debugSessions.size() >= 128 && !debugSessions.containsKey(player.getUniqueId()))
@@ -202,11 +218,17 @@ final class ArcSysService {
         UUID id = UUID.fromString(payload.get("spellId").getAsString());
         var spell = database.arcSpell(id, player.getUniqueId()).orElseThrow(() -> new ArcRequestException("NOT_FOUND", "術式が見つかりません"));
         JsonObject result = new JsonObject(); result.addProperty("spellId", id.toString()); result.addProperty("name", spell.name());
-        result.addProperty("source", spell.source()); result.addProperty("revision", spell.revision()); result.addProperty("hash", spell.sourceHash()); return result;
+        if (spell.source().startsWith(ArcProjectCompiler.BUNDLE_MARKER)) {
+            var bundle = ArcProjectCompiler.decodeBundle(spell.source()); JsonObject modules = new JsonObject();
+            bundle.modules().forEach(modules::addProperty); result.add("modules", modules);
+            result.addProperty("rootModule", bundle.rootModule());
+            result.addProperty("source", bundle.modules().getOrDefault(bundle.rootModule(), ""));
+        } else result.addProperty("source", spell.source());
+        result.addProperty("revision", spell.revision()); result.addProperty("hash", spell.sourceHash()); return result;
     }
 
     private JsonObject graph(JsonObject payload) {
-        var compiled = compiler.compile(source(payload)); JsonObject result = diagnostics(compiled);
+        var compiled = compilePayload(payload); JsonObject result = diagnostics(compiled);
         if (!compiled.valid()) return result;
         JsonArray nodes = new JsonArray(); int index = 0;
         for (var instruction : compiled.program().instructions()) {
@@ -238,7 +260,107 @@ final class ArcSysService {
         result.add("fragments", fragmentList);
         JsonArray apis = new JsonArray();
         ArcCompiler.availableApis().forEach((name, def) -> { JsonObject item = new JsonObject(); item.addProperty("name", name); item.addProperty("mana", def.fuel()); item.addProperty("capability", def.capability()); apis.add(item); });
-        result.add("apis", apis); result.add("deployHistory", logs(player).get("history")); return result;
+        result.add("apis", apis); result.add("deployHistory", logs(player).get("history"));
+        result.add("cores", listCores(player).get("cores")); return result;
+    }
+
+    private JsonObject listCores(Player player) {
+        JsonArray values = new JsonArray();
+        for (ArcCoreService.CoreView view : cores.list(player.getUniqueId())) values.add(coreJson(view));
+        JsonObject result = new JsonObject(); result.add("cores", values); result.addProperty("enabled", cores.enabled()); return result;
+    }
+
+    private JsonObject inspectCore(Player player, JsonObject payload) {
+        ArcCoreService.CoreView view = cores.inspect(player.getUniqueId(), uuid(payload, "circuitId"), uuid(payload, "nodeId"))
+                .orElseThrow(() -> new ArcRequestException("CORE_NOT_FOUND", "術式演算核が見つかりません"));
+        return coreJson(view);
+    }
+
+    private JsonObject bindCore(Player player, JsonObject payload) {
+        ArcCoreService.BindingMode mode;
+        try { mode = ArcCoreService.BindingMode.valueOf(payload.has("mode") ? payload.get("mode").getAsString().toUpperCase(Locale.ROOT) : "PINNED"); }
+        catch (IllegalArgumentException error) { throw new ArcRequestException("BINDING_MODE", "PINNEDまたはLATESTを指定してください"); }
+        Long revision = payload.has("revision") && !payload.get("revision").isJsonNull() ? payload.get("revision").getAsLong() : null;
+        ArcCoreService.Operation operation = cores.bind(player, uuid(payload, "circuitId"), uuid(payload, "nodeId"),
+                uuid(payload, "spellId"), revision, mode);
+        if (!operation.ok()) throw new ArcRequestException(operation.code(), operation.message());
+        return inspectCore(player, payload);
+    }
+
+    private JsonObject unbindCore(Player player, JsonObject payload) {
+        ArcCoreService.Operation operation = cores.unbind(player, uuid(payload, "circuitId"), uuid(payload, "nodeId"));
+        if (!operation.ok()) throw new ArcRequestException(operation.code(), operation.message());
+        JsonObject result = new JsonObject(); result.addProperty("status", "UNBOUND"); return result;
+    }
+
+    private JsonObject validateCore(Player player, JsonObject payload) {
+        JsonObject result = inspectCore(player, payload);
+        result.addProperty("valid", "READY".equals(result.get("status").getAsString())); return result;
+    }
+
+    private JsonObject simulateCore(Player player, JsonObject payload) {
+        inspectCore(player, payload);
+        UUID circuitId = uuid(payload, "circuitId"), nodeId = uuid(payload, "nodeId");
+        SpellDatabase.ArcCoreBinding binding = database.arcCoreBinding(circuitId, nodeId)
+                .filter(value -> value.ownerId().equals(player.getUniqueId()))
+                .orElseThrow(() -> new ArcRequestException("CORE_UNBOUND", "術式演算核にプログラムが紐付いていません"));
+        SpellDatabase.ArcSpellRevision revision = binding.mode().equals("LATEST")
+                ? database.arcSpell(binding.spellId(), player.getUniqueId()).orElse(null)
+                : database.arcSpell(binding.spellId(), player.getUniqueId(), binding.pinnedRevision()).orElse(null);
+        if (revision == null) throw new ArcRequestException("REVISION_CONFLICT", "実行対象Revisionが見つかりません");
+        JsonObject request = new JsonObject(); request.addProperty("source", revision.source());
+        JsonObject result = simulate(player, request); result.addProperty("revision", revision.revision()); return result;
+    }
+
+    private static JsonObject coreJson(ArcCoreService.CoreView view) {
+        JsonObject item = new JsonObject(); var binding = view.binding();
+        item.addProperty("bindingId", binding.bindingId().toString()); item.addProperty("circuitId", binding.circuitId().toString());
+        item.addProperty("nodeId", binding.nodeId().toString()); item.addProperty("fragmentInstanceId", binding.fragmentInstanceId().toString());
+        item.addProperty("spellId", binding.spellId().toString()); item.addProperty("program", view.spellName());
+        item.addProperty("circuit", view.circuitName()); item.addProperty("revision", view.resolvedRevision());
+        item.addProperty("mode", binding.mode()); item.addProperty("level", view.level()); item.addProperty("status", view.status());
+        return item;
+    }
+
+    private static UUID uuid(JsonObject payload, String name) {
+        try { return UUID.fromString(payload.get(name).getAsString()); }
+        catch (Exception error) { throw new ArcRequestException("INVALID_UUID", name + "が不正です"); }
+    }
+
+    private ArcCompiler.CompileResult compilePayload(JsonObject payload) {
+        try {
+            if (payload.has("modules") && payload.get("modules").isJsonObject()) {
+                Map<String, String> modules = new LinkedHashMap<>();
+                payload.getAsJsonObject("modules").entrySet().forEach(entry -> modules.put(entry.getKey(), entry.getValue().getAsString()));
+                String root = payload.has("rootModule") ? payload.get("rootModule").getAsString() : "main";
+                return projectCompiler.compile(modules, root);
+            }
+            String source = source(payload);
+            return source.startsWith(ArcProjectCompiler.BUNDLE_MARKER)
+                    ? projectCompiler.compileStored(source) : compiler.compile(source);
+        } catch (IllegalArgumentException error) {
+            throw new ArcRequestException("PROJECT_INVALID", "ArcSys projectの形式が不正です");
+        }
+    }
+
+    private String storedSource(JsonObject payload) {
+        if (!payload.has("modules") || !payload.get("modules").isJsonObject()) return source(payload);
+        Map<String, String> modules = new LinkedHashMap<>();
+        payload.getAsJsonObject("modules").entrySet().forEach(entry -> modules.put(entry.getKey(), entry.getValue().getAsString()));
+        String root = payload.has("rootModule") ? payload.get("rootModule").getAsString() : "main";
+        try { return ArcProjectCompiler.encodeBundle(modules, root); }
+        catch (IllegalArgumentException error) { throw new ArcRequestException("PROJECT_SIZE", "ArcSys projectが上限を超えています"); }
+    }
+
+    private static void addSourceMap(JsonObject response, net.monacraft.spellforge.arcsys.compiler.ArcBytecode.Program program) {
+        JsonArray mappings = new JsonArray();
+        program.sourceMap().entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+            JsonObject item = new JsonObject(); item.addProperty("pc", entry.getKey());
+            item.addProperty("module", entry.getValue().module());
+            item.addProperty("line", entry.getValue().span().start().line());
+            item.addProperty("column", entry.getValue().span().start().column()); mappings.add(item);
+        });
+        response.add("sourceMap", mappings);
     }
 
     private JsonObject diagnostics(ArcCompiler.CompileResult compiled) {
@@ -250,7 +372,8 @@ final class ArcSysService {
     private String source(JsonObject payload) {
         if (!payload.has("source")) throw new ArcRequestException("SOURCE_REQUIRED", "ArcSysソースがありません");
         String source = payload.get("source").getAsString();
-        if (source.isBlank() || source.length() > 23_000) throw new ArcRequestException("SOURCE_SIZE", "ArcSysソースのサイズが不正です");
+        int maximum = source.startsWith(ArcProjectCompiler.BUNDLE_MARKER) ? 800_000 : 23_000;
+        if (source.isBlank() || source.length() > maximum) throw new ArcRequestException("SOURCE_SIZE", "ArcSysソースのサイズが不正です");
         return source;
     }
 

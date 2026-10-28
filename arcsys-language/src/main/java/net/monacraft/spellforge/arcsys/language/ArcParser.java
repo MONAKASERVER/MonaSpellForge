@@ -33,16 +33,25 @@ public final class ArcParser {
         List<SpellDecl> spells = new ArrayList<>();
         List<FunctionDecl> globalFunctions = new ArrayList<>();
         List<VarDecl> globalConstants = new ArrayList<>();
+        ModuleDecl module = null;
+        List<UseDecl> imports = new ArrayList<>();
+        List<TypeDecl> types = new ArrayList<>();
         List<Expr> preconditions = new ArrayList<>(), postconditions = new ArrayList<>();
         Token first = peek();
         while (!atEnd()) {
             try {
                 while (match(AT_SIGN)) skipAnnotation();
-                if (match(MODULE, USE)) skipUntilSemicolon();
+                if (match(MODULE)) {
+                    if (module != null) throw error(previous(), "ARC-E1170", "module宣言は1ファイルに1つだけです");
+                    module = moduleDeclaration(previous());
+                }
+                else if (match(USE)) imports.add(useDeclaration(previous()));
                 else if (match(CONST)) globalConstants.add(variable(previous()));
                 else if (match(PUB, PRIVATE)) {
                     boolean effectful = match(EFFECT);
                     if (match(FN)) globalFunctions.add(function(previous(), effectful));
+                    else if (match(STRUCT)) types.add(structDeclaration(previous()));
+                    else if (match(ENUM)) types.add(enumDeclaration(previous()));
                     else skipTopLevelDeclaration();
                 }
                 else if (match(EFFECT)) {
@@ -52,7 +61,9 @@ public final class ArcParser {
                 else if (match(FN)) globalFunctions.add(function(previous(), false));
                 else if (match(CONTRACT)) parseContract(preconditions, postconditions);
                 else if (check(SPELL)) spells.add(spell());
-                else if (match(STRUCT, ENUM, TYPE, TRAIT, IMPL)) skipTopLevelDeclaration();
+                else if (match(STRUCT)) types.add(structDeclaration(previous()));
+                else if (match(ENUM)) types.add(enumDeclaration(previous()));
+                else if (match(TYPE, TRAIT, IMPL)) skipTopLevelDeclaration();
                 else throw error(peek(), "ARC-E1000", "トップレベル宣言が不正です", "module, use, const, fn, struct, enum, type, spell を使用してください");
             } catch (ParseFailure ignored) {
                 synchronizeTopLevel();
@@ -68,7 +79,67 @@ public final class ArcParser {
                     concat(postconditions, spell.postconditions()), spell.span())).toList();
         }
         Span span = spells.isEmpty() ? first.span() : join(first.span(), previous().span());
-        return new ParseResult(new Program(spells, span), diagnostics);
+        return new ParseResult(new Program(module, imports, types, globalConstants, globalFunctions, spells, span), diagnostics);
+    }
+
+    private ModuleDecl moduleDeclaration(Token begin) {
+        String name = qualifiedPath("ARC-E1171", "module名が必要です");
+        Token end = consume(SEMICOLON, "ARC-E1172", "module宣言の末尾に';'が必要です");
+        return new ModuleDecl(name, join(begin.span(), end.span()));
+    }
+
+    private UseDecl useDeclaration(Token begin) {
+        String name = qualifiedPath("ARC-E1173", "importするmodule名が必要です");
+        String alias = null;
+        if (check(IDENT) && peek().lexeme().equalsIgnoreCase("as")) {
+            advance(); alias = consume(IDENT, "ARC-E1174", "import aliasが必要です").lexeme();
+        }
+        Token end = consume(SEMICOLON, "ARC-E1175", "use宣言の末尾に';'が必要です");
+        return new UseDecl(name, alias, join(begin.span(), end.span()));
+    }
+
+    private String qualifiedPath(String code, String message) {
+        StringBuilder value = new StringBuilder(consumeName(code, message).lexeme());
+        while (match(DOT, DOUBLE_COLON)) value.append('.').append(consumeName(code, message).lexeme());
+        return value.toString();
+    }
+
+    private StructDecl structDeclaration(Token begin) {
+        Token name = consume(IDENT, "ARC-E1180", "struct名が必要です");
+        consume(LEFT_BRACE, "ARC-E1181", "struct本体の'{'が必要です");
+        List<FieldDecl> fields = new ArrayList<>(); Set<String> names = new HashSet<>();
+        while (!check(RIGHT_BRACE) && !atEnd()) {
+            Token field = consume(IDENT, "ARC-E1182", "field名が必要です");
+            if (!names.add(field.lexeme())) throw error(field, "ARC-E1183", "field名が重複しています: " + field.lexeme());
+            consume(COLON, "ARC-E1184", "field型の':'が必要です");
+            String type = readTypeReference(Set.of(COMMA, SEMICOLON, RIGHT_BRACE));
+            fields.add(new FieldDecl(field.lexeme(), type, field.span()));
+            match(COMMA, SEMICOLON);
+            if (fields.size() > 32) throw error(field, "ARC-E1185", "struct fieldは32個までです");
+        }
+        Token end = consume(RIGHT_BRACE, "ARC-E1186", "struct本体を閉じる'}'が必要です");
+        return new StructDecl(name.lexeme(), fields, join(begin.span(), end.span()));
+    }
+
+    private EnumDecl enumDeclaration(Token begin) {
+        Token name = consume(IDENT, "ARC-E1190", "enum名が必要です");
+        consume(LEFT_BRACE, "ARC-E1191", "enum本体の'{'が必要です");
+        List<EnumVariantDecl> variants = new ArrayList<>(); Set<String> names = new HashSet<>();
+        while (!check(RIGHT_BRACE) && !atEnd()) {
+            Token variant = consume(IDENT, "ARC-E1192", "variant名が必要です");
+            if (!names.add(variant.lexeme())) throw error(variant, "ARC-E1193", "variant名が重複しています: " + variant.lexeme());
+            String payload = null;
+            if (match(LEFT_PAREN)) {
+                payload = readTypeReference(Set.of(RIGHT_PAREN));
+                consume(RIGHT_PAREN, "ARC-E1194", "variant payloadの')'が必要です");
+            }
+            variants.add(new EnumVariantDecl(variant.lexeme(), payload, variant.span()));
+            match(COMMA, SEMICOLON);
+            if (variants.size() > 64) throw error(variant, "ARC-E1195", "enum variantは64個までです");
+        }
+        Token end = consume(RIGHT_BRACE, "ARC-E1196", "enum本体を閉じる'}'が必要です");
+        if (variants.isEmpty()) throw error(end, "ARC-E1197", "enumにはvariantが必要です");
+        return new EnumDecl(name.lexeme(), variants, join(begin.span(), end.span()));
     }
 
     private SpellDecl spell() {
@@ -146,15 +217,17 @@ public final class ArcParser {
         Token name = consume(IDENT, "ARC-E1020", "関数名が必要です");
         consume(LEFT_PAREN, "ARC-E1021", "引数リストの '(' が必要です");
         List<String> parameters = new ArrayList<>();
+        Map<String, String> parameterTypes = new LinkedHashMap<>();
         if (!check(RIGHT_PAREN)) {
             do {
                 if (parameters.size() >= 16) throw error(peek(), "ARC-E1022", "関数引数は16個までです", "関数を分割してください");
-                parameters.add(consume(IDENT, "ARC-E1023", "引数名が必要です").lexeme());
-                if (match(COLON)) skipTypeReference();
+                String parameter = consume(IDENT, "ARC-E1023", "引数名が必要です").lexeme();
+                parameters.add(parameter);
+                if (match(COLON)) parameterTypes.put(parameter, readTypeReference(Set.of(COMMA, RIGHT_PAREN)));
             } while (match(COMMA));
         }
         consume(RIGHT_PAREN, "ARC-E1024", "引数リストの ')' が必要です");
-        if (match(ARROW)) skipTypeReferenceBeforeBlock();
+        String returnType = match(ARROW) ? readTypeReference(Set.of(LEFT_BRACE, USES)) : null;
         Set<String> declaredEffects = new LinkedHashSet<>();
         if (match(USES)) {
             consume(LEFT_BRACKET, "ARC-E1026", "usesには'['が必要です");
@@ -165,7 +238,7 @@ public final class ArcParser {
             consume(RIGHT_BRACKET, "ARC-E1028", "usesを閉じる']'が必要です");
         }
         Block body = block();
-        return new FunctionDecl(name.lexeme(), parameters, effectful, declaredEffects, body, join(begin.span(), body.span()));
+        return new FunctionDecl(name.lexeme(), parameters, parameterTypes, returnType, effectful, declaredEffects, body, join(begin.span(), body.span()));
     }
 
     private Block block() {
@@ -210,16 +283,16 @@ public final class ArcParser {
     }
 
     private VarDecl variable(Token begin) {
-        if (begin.type() == LET) match(MUT);
+        boolean mutable = begin.type() == STATE || begin.type() == LET && match(MUT);
         Token name = consume(IDENT, "ARC-E1040", "変数名が必要です");
-        if (match(COLON)) skipTypeReference();
+        String declaredType = match(COLON) ? readTypeReference(Set.of(EQUAL)) : null;
         consume(EQUAL, "ARC-E1041", "変数の初期値が必要です");
         Expr initializer = expression();
         Persistence persistence = null;
         if (match(PERSIST)) persistence = persistence(previous(), begin.type());
         Token end = finishStatement();
         Binding binding = switch (begin.type()) { case LET -> Binding.LET; case CONST -> Binding.CONST; default -> Binding.STATE; };
-        return new VarDecl(binding, name.lexeme(), initializer, persistence, join(begin.span(), end.span()));
+        return new VarDecl(binding, name.lexeme(), declaredType, mutable, initializer, persistence, join(begin.span(), end.span()));
     }
 
     private Persistence persistence(Token begin, Type declarationType) {
@@ -362,24 +435,18 @@ public final class ArcParser {
         return new Member(root, member, span);
     }
 
-    private void skipTypeReference() {
+    private String readTypeReference(Set<Type> terminators) {
+        StringBuilder type = new StringBuilder();
         int genericDepth = 0;
         while (!atEnd()) {
-            if (check(LESS)) { genericDepth++; advance(); continue; }
-            if (check(GREATER) && genericDepth > 0) { genericDepth--; advance(); continue; }
-            if (genericDepth == 0 && (check(EQUAL) || check(COMMA) || check(RIGHT_PAREN))) return;
-            advance();
+            if (genericDepth == 0 && terminators.contains(peek().type())) break;
+            Token token = advance();
+            if (token.type() == LESS) genericDepth++;
+            else if (token.type() == GREATER && genericDepth > 0) genericDepth--;
+            type.append(token.lexeme());
         }
-    }
-
-    private void skipTypeReferenceBeforeBlock() {
-        int genericDepth = 0;
-        while (!atEnd()) {
-            if (check(LESS)) { genericDepth++; advance(); continue; }
-            if (check(GREATER) && genericDepth > 0) { genericDepth--; advance(); continue; }
-            if (genericDepth == 0 && (check(LEFT_BRACE) || check(USES))) return;
-            advance();
-        }
+        if (type.isEmpty()) throw error(peek(), "ARC-E1029", "型名が必要です");
+        return type.toString();
     }
 
     private void skipAnnotation() {
@@ -611,13 +678,16 @@ public final class ArcParser {
         if (match(IDENT)) {
             StringBuilder name = new StringBuilder(previous().lexeme());
             Span span = previous().span();
+            if (match(DOUBLE_COLON)) {
+                Token part = consume(IDENT, "ARC-E1145", "列挙値が必要です");
+                name.append("::").append(part.lexeme()); span = join(span, part.span());
+            }
             if (match(LEFT_PAREN)) {
                 String binding = null;
                 if (!check(RIGHT_PAREN)) binding = consumeName("ARC-E1147", "値を受け取る変数名が必要です").lexeme();
                 Token end = consume(RIGHT_PAREN, "ARC-E1148", "バリアントパターンの ')' が必要です");
                 return new VariantPattern(name.toString(), binding, join(span, end.span()));
             }
-            if (match(DOUBLE_COLON)) { Token part = consume(IDENT, "ARC-E1145", "列挙値が必要です"); name.append("::").append(part.lexeme()); span = join(span, part.span()); }
             return new EnumPattern(name.toString(), span);
         }
         throw error(begin, "ARC-E1146", "matchパターンが不正です");

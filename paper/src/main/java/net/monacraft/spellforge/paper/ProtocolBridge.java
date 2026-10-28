@@ -148,6 +148,22 @@ final class ProtocolBridge implements PluginMessageListener, Listener {
                 return;
             }
 
+            if (frame.type() == SpellForgeProtocol.Type.STOW_NODE_REQ) {
+                com.google.gson.JsonObject request = com.google.gson.JsonParser.parseString(frame.payload()).getAsJsonObject();
+                UUID nodeId = UUID.fromString(request.get("nodeId").getAsString());
+                Circuit circuit = gson.fromJson(request.get("circuit"), Circuit.class);
+                if (!circuit.ownerId().equals(player.getUniqueId())) {
+                    error(player, frame, "OWNER_MISMATCH");
+                    return;
+                }
+                var result = embedding.stow(player, circuit, frame.baseRevision(), nodeId);
+                send(player, new SpellForgeProtocol.Frame(result.conflict()
+                        ? SpellForgeProtocol.Type.CONFLICT : SpellForgeProtocol.Type.SAVE_RESULT,
+                        frame.requestId(), token, circuit.circuitId(), result.circuit().revision(), gson.toJson(result)));
+                if (result.saved()) sendEditorData(player, token, result.circuit());
+                return;
+            }
+
             if (frame.type() == SpellForgeProtocol.Type.VALIDATE_REQ || frame.type() == SpellForgeProtocol.Type.SAVE_REQ) {
                 Circuit circuit = gson.fromJson(frame.payload(), Circuit.class);
                 if (!circuit.ownerId().equals(player.getUniqueId())) {

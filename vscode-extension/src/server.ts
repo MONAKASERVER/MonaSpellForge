@@ -4,29 +4,11 @@ import {
   Hover, Location, Position, Range, TextEdit
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
+import { magicApis as apis } from './magicApiCatalog';
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
-const apis: Record<string, { detail: string; mana: number; capability: string }> = {
-  'mobs.hostile': { detail: '範囲内の敵対Mobを取得します', mana: 4, capability: 'sense.hostile' },
-  'target.nearest': { detail: '最も近い対象を取得します', mana: 2, capability: 'sense.target' },
-  'spell.cast': { detail: '登録済み術式効果を対象へ要求します', mana: 12, capability: 'spell.cast' },
-  'spell.effect': { detail: '安全な効果要求を生成します', mana: 8, capability: 'spell.effect' },
-  'world.particle': { detail: '構成に応じたパーティクルを要求します', mana: 2, capability: 'visual.particle' },
-  'math.clamp': { detail: '数値を最小値と最大値の範囲へ制限します', mana: 0, capability: 'math' },
-  'entities.hostile': { detail: '制限付き範囲から敵対Mobを観測します', mana: 4, capability: 'sense.hostile' },
-  'combat.can_attack': { detail: '保護・PvP規則を含め攻撃可能か検査します', mana: 0, capability: 'combat.inspect' },
-  'combat.damage': { detail: 'サーバー権威の魔術ダメージを要求します', mana: 12, capability: 'combat.damage' },
-  'combat.apply': { detail: '許可済み状態異常を要求します', mana: 8, capability: 'combat.effect' },
-  'particles.spiral': { detail: '上限制御された螺旋パーティクル', mana: 2, capability: 'visual.particle' },
-  'particles.ring': { detail: '上限制御された円形パーティクル', mana: 2, capability: 'visual.particle' },
-  'display.magic_circle': { detail: '一時的な魔法陣Displayを要求します', mana: 4, capability: 'visual.display' },
-  'raycast.entities': { detail: '距離・件数制限付きEntity Raycast', mana: 2, capability: 'sense.raycast' },
-  'raycast.blocks': { detail: '距離制限付きBlock Raycast', mana: 2, capability: 'sense.raycast' },
-  'pdc.get': { detail: 'ArcSys専用名前空間を読み取ります', mana: 0, capability: 'storage.read' },
-  'pdc.set': { detail: 'ArcSys専用名前空間へ容量制限付き保存を要求します', mana: 2, capability: 'storage.write' }
-};
 const keywords = [
   'spell', 'module', 'use', 'pub', 'private', 'fn', 'effect', 'struct', 'enum', 'type', 'trait', 'impl',
   'on', 'cast', 'pulse', 'hit', 'kill', 'damage', 'death', 'enter', 'mana_below', 'spell_end', 'signal', 'projectile_impact',
@@ -79,14 +61,18 @@ function validate(document: TextDocument): void {
 
 connection.onCompletion((): CompletionItem[] => [
   ...keywords.map(label => ({ label, kind: CompletionItemKind.Keyword })),
-  ...Object.entries(apis).map(([label, api]) => ({ label, kind: CompletionItemKind.Function, detail: `${api.detail} / MP ${api.mana}`, documentation: `Capability: ${api.capability}` }))
+  ...Object.entries(apis).map(([label, api]) => ({
+    label, kind: CompletionItemKind.Function,
+    detail: `${api.signature} / MP ${api.mana}`,
+    documentation: `${api.detail}\n\nCapability: ${api.capability}${api.effectful ? ' (effect)' : ' (read-only)'}`
+  }))
 ]);
 
 connection.onHover(params => {
   const document = documents.get(params.textDocument.uri); if (!document) return null;
   const word = wordAt(document, params.position);
   const api = apis[word];
-  if (api) return { contents: { kind: 'markdown', value: `**${word}**\n\n${api.detail}\n\n消費魔力: **${api.mana}**  \nCapability: \`${api.capability}\`` } } as Hover;
+  if (api) return { contents: { kind: 'markdown', value: `**${api.signature}**\n\n${api.detail}\n\n基礎消費魔力: **${api.mana}**  \nCapability: \`${api.capability}\`  \n種別: ${api.effectful ? '**Effect**' : 'Read only'}` } } as Hover;
   return null;
 });
 

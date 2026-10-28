@@ -12,6 +12,9 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.monacraft.spellforge.catalog.FragmentCatalog;
 import net.monacraft.spellforge.catalog.FragmentPresentation;
+import net.monacraft.spellforge.compiler.ArcCircuitCodec;
+import net.monacraft.spellforge.compiler.ArcCircuitCodec.PortableEdge;
+import net.monacraft.spellforge.compiler.ArcCircuitCodec.PortableNode;
 import net.monacraft.spellforge.compiler.CircuitCompiler;
 import net.monacraft.spellforge.compiler.SpellMetrics;
 import net.monacraft.spellforge.model.SpellModel.Category;
@@ -127,9 +130,9 @@ public final class SpellForgeScreen extends Screen {
         });
         addRenderableWidget(searchBox);
 
-        int buttonWidth = Math.max(54, Math.min(82, (panelWidth() - 44) / 5));
+        int buttonWidth = Math.max(48, Math.min(76, (panelWidth() - 52) / 7));
         int gap = 4;
-        int totalWidth = buttonWidth * 5 + gap * 4;
+        int totalWidth = buttonWidth * 7 + gap * 6;
         int x = panelLeft() + (panelWidth() - totalWidth) / 2;
         int y = panelTop() + panelHeight() - 27;
         addRenderableWidget(Button.builder(Component.translatable("monaspellforge.undo"), button -> undo())
@@ -140,8 +143,12 @@ public final class SpellForgeScreen extends Screen {
                 .bounds(x + (buttonWidth + gap) * 2, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("monaspellforge.save"), button -> send(SpellForgeProtocol.Type.SAVE_REQ))
                 .bounds(x + (buttonWidth + gap) * 3, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("monaspellforge.close"), button -> onClose())
+        addRenderableWidget(Button.builder(Component.literal("出力"), button -> exportArc())
                 .bounds(x + (buttonWidth + gap) * 4, y, buttonWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("取込"), button -> importArc())
+                .bounds(x + (buttonWidth + gap) * 5, y, buttonWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("monaspellforge.close"), button -> onClose())
+                .bounds(x + (buttonWidth + gap) * 6, y, buttonWidth, 20).build());
     }
 
     void accept(SpellForgeProtocol.Frame frame) {
@@ -149,10 +156,20 @@ public final class SpellForgeScreen extends Screen {
             case EDITOR_DATA -> acceptPalette(frame.payload());
             case VALIDATE_RESULT -> acceptValidation(frame.payload());
             case SAVE_RESULT -> {
+                try {
+                    JsonObject response = JsonParser.parseString(frame.payload()).getAsJsonObject();
+                    if (response.has("saved") && !response.get("saved").getAsBoolean()) {
+                        setError("保存できませんでした: " + readableError(response.has("message")
+                                ? response.get("message").getAsString() : "SERVER_REJECTED"));
+                        return;
+                    }
+                    circuit = MonaSpellForgeClient.gson().fromJson(response.get("circuit"), Circuit.class);
+                } catch (RuntimeException ignored) {
+                    circuit = new Circuit(circuit.circuitId(), circuit.ownerId(), circuit.name(), frame.baseRevision(),
+                            circuit.schemaVersion(), circuit.nodes(), circuit.edges(), circuit.createdAt(), circuit.updatedAt());
+                }
                 status = Component.literal("保存しました（Revision " + frame.baseRevision() + "）");
                 statusColor = CONNECTED;
-                circuit = new Circuit(circuit.circuitId(), circuit.ownerId(), circuit.name(), frame.baseRevision(),
-                        circuit.schemaVersion(), circuit.nodes(), circuit.edges(), circuit.createdAt(), circuit.updatedAt());
             }
             case CONFLICT -> setError("別の画面で更新されています。/msf open で開き直してください");
             case ERROR -> setError("通信エラー: " + readableError(frame.payload()));
@@ -181,6 +198,58 @@ public final class SpellForgeScreen extends Screen {
                 circuit.revision(), MonaSpellForgeClient.json(circuit)));
         status = Component.literal(type == SpellForgeProtocol.Type.SAVE_REQ ? "保存要求を送信しました" : "サーバーで検証しています…");
         statusColor = STATUS_WARNING;
+    }
+
+    private void exportArc() {
+        String source = ArcCircuitCodec.toArcSource(circuit);
+        minecraft.keyboardHandler.setClipboard(source);
+        status = Component.literal("回路を.arc形式でクリップボードへ出力しました");
+        statusColor = CONNECTED;
+    }
+
+    private void importArc() {
+        try {
+            String source = minecraft.keyboardHandler.getClipboard();
+            ArcCircuitCodec.PortableCircuit imported = ArcCircuitCodec.fromArcSource(source);
+
+            Map<PaletteKey, ArrayDeque<OwnedFragment>> available = new HashMap<>();
+            Set<UUID> added = new HashSet<>();
+            for (CircuitNode node : circuit.nodes()) {
+                OwnedFragment fragment = new OwnedFragment(node.fragmentInstanceId(), node.fragmentId(), node.level());
+                available.computeIfAbsent(new PaletteKey(fragment.fragmentId(), fragment.level()), ignored -> new ArrayDeque<>()).add(fragment);
+                added.add(fragment.instanceId());
+            }
+            for (OwnedFragment fragment : palette) if (added.add(fragment.instanceId())) {
+                available.computeIfAbsent(new PaletteKey(fragment.fragmentId(), fragment.level()), ignored -> new ArrayDeque<>()).add(fragment);
+            }
+
+            Map<String, UUID> nodeIds = new HashMap<>();
+            List<CircuitNode> nodes = new ArrayList<>();
+            for (PortableNode node : imported.nodes()) {
+                String fragmentId = net.monacraft.spellforge.model.SpellModel.normalizeId(node.fragmentId());
+                ArrayDeque<OwnedFragment> candidates = available.get(new PaletteKey(fragmentId, node.level()));
+                if (candidates == null || candidates.isEmpty()) throw new IllegalArgumentException("missing:" + fragmentId);
+                OwnedFragment owned = candidates.removeFirst();
+                UUID nodeId = UUID.randomUUID(); nodeIds.put(node.key(), nodeId);
+                nodes.add(new CircuitNode(nodeId, nodes.size(), owned.instanceId(), fragmentId,
+                        node.level(), node.parameters(), clamp(node.x(), WORLD_MIN, WORLD_MAX), clamp(node.y(), WORLD_MIN, WORLD_MAX)));
+            }
+            List<CircuitEdge> edges = new ArrayList<>();
+            for (PortableEdge edge : imported.edges()) {
+                UUID sourceId = nodeIds.get(edge.source()), targetId = nodeIds.get(edge.target());
+                if (sourceId == null || targetId == null) throw new IllegalArgumentException("edge");
+                edges.add(new CircuitEdge(UUID.randomUUID(), sourceId, edge.sourcePort(), targetId, edge.targetPort()));
+            }
+            saveHistory();
+            circuit = circuit.withContent(nodes, edges);
+            refreshValidation();
+            status = Component.literal(".arcからノード回路を取り込みました。検証後に保存してください");
+            statusColor = STATUS_WARNING;
+        } catch (RuntimeException error) {
+            setError(error.getMessage() != null && error.getMessage().startsWith("missing:")
+                    ? "必要な所持欠片が不足しています: " + error.getMessage().substring(8)
+                    : "対応するMonaSpellForge .arcをクリップボードから読み込めませんでした");
+        }
     }
 
     private void acceptValidation(String payload) {
@@ -501,8 +570,10 @@ public final class SpellForgeScreen extends Screen {
     }
 
     private void drawContextMenu(GuiGraphicsExtractor graphics, ContextMenu menu, int mouseX, int mouseY) {
-        List<String> labels = menu.nodeId == null
-                ? List.of("ノードを追加")
+        CircuitNode contextNode = menu.nodeId == null ? null : node(menu.nodeId);
+        List<String> labels = menu.nodeId == null ? List.of("ノードを追加")
+                : contextNode != null && contextNode.fragmentId().equals("ARCSYS_CORE")
+                ? List.of("ArcSys制御パネル", "ノードを複製", "ノードをしまう", "ノードを追加")
                 : List.of("ノードを複製", "ノードをしまう", "ノードを追加");
         int menuWidth = 132;
         int menuHeight = labels.size() * 22 + 6;
@@ -760,8 +831,10 @@ public final class SpellForgeScreen extends Screen {
 
     private boolean handleContextClick(int mouseX, int mouseY) {
         ContextMenu menu = contextMenu;
-        List<ContextAction> actions = menu.nodeId == null
-                ? List.of(ContextAction.SEARCH)
+        CircuitNode contextNode = menu.nodeId == null ? null : node(menu.nodeId);
+        List<ContextAction> actions = menu.nodeId == null ? List.of(ContextAction.SEARCH)
+                : contextNode != null && contextNode.fragmentId().equals("ARCSYS_CORE")
+                ? List.of(ContextAction.CONFIGURE_CORE, ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH)
                 : List.of(ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH);
         int width = 132;
         int x = Math.min(menu.x, this.width - width - 4);
@@ -779,6 +852,7 @@ public final class SpellForgeScreen extends Screen {
             }
             case STOW -> stowNode(menu.nodeId);
             case DUPLICATE -> duplicateNode(menu.nodeId);
+            case CONFIGURE_CORE -> minecraft.setScreen(new ArcCoreScreen(this, token, circuit.circuitId(), menu.nodeId));
         }
         return true;
     }
@@ -791,8 +865,18 @@ public final class SpellForgeScreen extends Screen {
                 && !edge.targetNodeId().equals(nodeId)).toList();
         circuit = circuit.withContent(nodes, edges);
         refreshValidation();
-        status = Component.literal("保存するとノードを所持一覧へ戻します");
-        statusColor = CONNECTED;
+        if (circuit.revision() == 0) {
+            status = Component.literal("未保存ノードを所持一覧へ戻しました");
+            statusColor = CONNECTED;
+            return;
+        }
+        JsonObject request = new JsonObject();
+        request.addProperty("nodeId", nodeId.toString());
+        request.add("circuit", MonaSpellForgeClient.gson().toJsonTree(circuit));
+        MonaSpellForgeClient.send(new SpellForgeProtocol.Frame(SpellForgeProtocol.Type.STOW_NODE_REQ,
+                UUID.randomUUID(), token, circuit.circuitId(), circuit.revision(), request.toString()));
+        status = Component.literal("ノードを所持一覧へ戻しています…");
+        statusColor = STATUS_WARNING;
     }
 
     private void duplicateNode(UUID nodeId) {
@@ -1223,7 +1307,7 @@ public final class SpellForgeScreen extends Screen {
     @Override
     public boolean isPauseScreen() { return false; }
 
-    private enum ContextAction { DUPLICATE, STOW, SEARCH }
+    private enum ContextAction { CONFIGURE_CORE, DUPLICATE, STOW, SEARCH }
     private enum CategoryTab {
         ALL("全部", null), TRIGGER("発動", Category.TRIGGER), ELEMENT("属性", Category.ELEMENT),
         SHAPE("形状", Category.SHAPE), TARGET("対象", Category.TARGET), MODIFIER("補助", Category.MODIFIER),
