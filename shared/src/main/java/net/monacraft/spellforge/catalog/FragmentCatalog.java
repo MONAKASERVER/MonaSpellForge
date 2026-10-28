@@ -60,7 +60,7 @@ public final class FragmentCatalog {
             case "REPEAT", "DELAY", "FORK", "TIMER", "PERIODIC_SIGNAL", "RETURN_CIRCUIT" -> 5;
             default -> 3;
         })));
-        return new FragmentCatalog(all, 4);
+        return new FragmentCatalog(all, 5);
     }
 
     private static FragmentDefinition definition(String id, Category category, int maxLevel) {
@@ -81,6 +81,10 @@ public final class FragmentCatalog {
             } else if (id.equals("TRUE_DAMAGE")) {
                 levels.put(level, new LevelParameters(50 + level * level * 10.0, 0, 0,
                         80.0 + level * 55.0, 72 + level * 30));
+            } else if (id.equals("HEAL")) {
+                // Balance invariant: every 5 HP of base healing costs at least 200 MP.
+                levels.put(level, new LevelParameters(5.0 * level, 12 + level * 6,
+                        2 + level * 1.5, 200.0 * level, baseRuntime + level - 1));
             } else levels.put(level, new LevelParameters(basePower * (1 + (level - 1) * 0.28), 12 + level * 6,
                     2 + level * 1.5, baseMana * (1 + (level - 1) * 0.35), baseRuntime + level - 1));
         }

@@ -4,7 +4,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.monacraft.spellforge.api.FragmentService;
 import net.monacraft.spellforge.arcsys.compiler.ArcBytecode;
-import net.monacraft.spellforge.arcsys.compiler.ArcCompiler;
+import net.monacraft.spellforge.arcsys.compiler.ArcProjectCompiler;
 import net.monacraft.spellforge.arcsys.vm.ArcScheduler;
 import net.monacraft.spellforge.arcsys.vm.ArcVm;
 import org.bukkit.*;
@@ -28,7 +28,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
     private final SpellDatabase database;
     private final FragmentService fragments;
     private final ManaService mana;
-    private final ArcCompiler compiler = new ArcCompiler();
+    private final ArcProjectCompiler projectCompiler = new ArcProjectCompiler();
     private final ArcScheduler scheduler;
     private final ArcEffectContract effectContract;
     private final ArcProtectionAdapters protections = new ArcProtectionAdapters();
@@ -63,7 +63,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
         if (!player.hasPermission("monaspellforge.arcsys.cast")) return new CastOutcome(false, "NO_PERMISSION", "ArcSys発動権限がありません", null);
         var revision = database.arcSpell(spellId, player.getUniqueId()).orElse(null);
         if (revision == null) return new CastOutcome(false, "NOT_FOUND", "ArcSys術式が見つかりません", null);
-        var compiled = compiler.compile(revision.source());
+        var compiled = projectCompiler.compileStored(revision.source());
         if (!compiled.valid()) return new CastOutcome(false, "COMPILE_ERROR", "保存済み術式を再コンパイルできません", null);
         String requirementFailure = requirementFailure(player, compiled.program().requirements());
         if (requirementFailure != null) return new CastOutcome(false, "REQUIREMENT", requirementFailure, null);
@@ -85,7 +85,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
 
     CoreCastOutcome castCore(Player player, SpellDatabase.ArcSpellRevision revision, int fuel, int maxEffects,
                              Map<String, Object> inputs, boolean applyProductionEffects, CoreCompletion completion) {
-        var compiled = compiler.compile(revision.source());
+        var compiled = projectCompiler.compileStored(revision.source());
         if (!compiled.valid()) return new CoreCastOutcome(false, "COMPILE_ERROR", "保存済み術式を再コンパイルできません", null);
         String requirementFailure = requirementFailure(player, compiled.program().requirements());
         if (requirementFailure != null) return new CoreCastOutcome(false, "REQUIREMENT", requirementFailure, null);
@@ -125,7 +125,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
             if (!summary.enabled() || started >= 8) continue;
             var revision = database.arcSpell(summary.spellId(), player.getUniqueId()).orElse(null);
             if (revision == null) continue;
-            var compiled = compiler.compile(revision.source());
+            var compiled = projectCompiler.compileStored(revision.source());
             if (!compiled.valid() || !compiled.program().entryPoints().containsKey("on:signal")) continue;
             if (requirementFailure(player, compiled.program().requirements()) != null) continue;
             RuntimeHost host = new RuntimeHost(player, revision.spellId(), compiled.program().capabilities());

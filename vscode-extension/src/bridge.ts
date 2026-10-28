@@ -25,7 +25,7 @@ export class FabricBridge {
       socket.once('open', () => { clearTimeout(timer); resolve(); });
       socket.once('error', error => { clearTimeout(timer); reject(error); });
     });
-    await this.request('hello', { client: 'vscode', clientVersion: '2.0.0-alpha.3' });
+    await this.request('hello', { client: 'vscode', clientVersion: '2.0.0-alpha.4' });
   }
 
   request(type: BridgeRequestType, payload: Record<string, unknown>): Promise<unknown> {

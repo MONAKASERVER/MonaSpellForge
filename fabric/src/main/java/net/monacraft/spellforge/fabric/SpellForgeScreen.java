@@ -12,6 +12,9 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.monacraft.spellforge.catalog.FragmentCatalog;
 import net.monacraft.spellforge.catalog.FragmentPresentation;
+import net.monacraft.spellforge.compiler.ArcCircuitCodec;
+import net.monacraft.spellforge.compiler.ArcCircuitCodec.PortableEdge;
+import net.monacraft.spellforge.compiler.ArcCircuitCodec.PortableNode;
 import net.monacraft.spellforge.compiler.CircuitCompiler;
 import net.monacraft.spellforge.compiler.SpellMetrics;
 import net.monacraft.spellforge.model.SpellModel.Category;
@@ -32,8 +35,6 @@ import net.monacraft.spellforge.protocol.SpellForgeProtocol;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
@@ -200,19 +201,7 @@ public final class SpellForgeScreen extends Screen {
     }
 
     private void exportArc() {
-        List<ArcNode> nodes = circuit.nodes().stream().map(node -> new ArcNode(node.nodeId().toString(),
-                node.fragmentId(), node.level(), node.parameters(), node.uiX(), node.uiY())).toList();
-        List<ArcEdge> edges = circuit.edges().stream().map(edge -> new ArcEdge(edge.sourceNodeId().toString(),
-                edge.sourcePortId(), edge.targetNodeId().toString(), edge.targetPortId())).toList();
-        ArcCircuitExport exported = new ArcCircuitExport(1, circuit.name(), nodes, edges);
-        String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                MonaSpellForgeClient.json(exported).getBytes(StandardCharsets.UTF_8));
-        String spellName = circuit.name().replaceAll("[^A-Za-z0-9_]", "_");
-        if (spellName.isBlank() || Character.isDigit(spellName.charAt(0))) spellName = "Circuit_" + spellName;
-        String source = "// MonaSpellForge node-circuit export v1\n"
-                + "// @msf-circuit " + encoded + "\n"
-                + "// Nodes: " + circuit.nodes().size() + " / Edges: " + circuit.edges().size() + "\n"
-                + "spell " + spellName + " {\n  on cast {\n    return true;\n  }\n}\n";
+        String source = ArcCircuitCodec.toArcSource(circuit);
         minecraft.keyboardHandler.setClipboard(source);
         status = Component.literal("回路を.arc形式でクリップボードへ出力しました");
         statusColor = CONNECTED;
@@ -221,16 +210,7 @@ public final class SpellForgeScreen extends Screen {
     private void importArc() {
         try {
             String source = minecraft.keyboardHandler.getClipboard();
-            String marker = "// @msf-circuit ";
-            String encoded = source.lines().filter(line -> line.startsWith(marker)).findFirst()
-                    .orElseThrow(() -> new IllegalArgumentException("marker")).substring(marker.length()).trim();
-            if (encoded.length() > 60_000) throw new IllegalArgumentException("size");
-            String json = new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8);
-            ArcCircuitExport imported = MonaSpellForgeClient.fromJson(json, ArcCircuitExport.class);
-            if (imported.schema() != 1 || imported.nodes() == null || imported.edges() == null
-                    || imported.nodes().size() > CircuitCompiler.MAX_NODES || imported.edges().size() > CircuitCompiler.MAX_EDGES) {
-                throw new IllegalArgumentException("schema");
-            }
+            ArcCircuitCodec.PortableCircuit imported = ArcCircuitCodec.fromArcSource(source);
 
             Map<PaletteKey, ArrayDeque<OwnedFragment>> available = new HashMap<>();
             Set<UUID> added = new HashSet<>();
@@ -245,7 +225,7 @@ public final class SpellForgeScreen extends Screen {
 
             Map<String, UUID> nodeIds = new HashMap<>();
             List<CircuitNode> nodes = new ArrayList<>();
-            for (ArcNode node : imported.nodes()) {
+            for (PortableNode node : imported.nodes()) {
                 String fragmentId = net.monacraft.spellforge.model.SpellModel.normalizeId(node.fragmentId());
                 ArrayDeque<OwnedFragment> candidates = available.get(new PaletteKey(fragmentId, node.level()));
                 if (candidates == null || candidates.isEmpty()) throw new IllegalArgumentException("missing:" + fragmentId);
@@ -255,7 +235,7 @@ public final class SpellForgeScreen extends Screen {
                         node.level(), node.parameters(), clamp(node.x(), WORLD_MIN, WORLD_MAX), clamp(node.y(), WORLD_MIN, WORLD_MAX)));
             }
             List<CircuitEdge> edges = new ArrayList<>();
-            for (ArcEdge edge : imported.edges()) {
+            for (PortableEdge edge : imported.edges()) {
                 UUID sourceId = nodeIds.get(edge.source()), targetId = nodeIds.get(edge.target());
                 if (sourceId == null || targetId == null) throw new IllegalArgumentException("edge");
                 edges.add(new CircuitEdge(UUID.randomUUID(), sourceId, edge.sourcePort(), targetId, edge.targetPort()));
@@ -1338,10 +1318,6 @@ public final class SpellForgeScreen extends Screen {
         CategoryTab(String label, Category category) { this.label = label; this.category = category; }
     }
     private record PaletteKey(String fragmentId, int level) { }
-    private record ArcCircuitExport(int schema, String name, List<ArcNode> nodes, List<ArcEdge> edges) { }
-    private record ArcNode(String key, String fragmentId, int level, Map<String, String> parameters,
-                           double x, double y) { }
-    private record ArcEdge(String source, String sourcePort, String target, String targetPort) { }
     private record PaletteGroup(PaletteKey key, List<OwnedFragment> fragments) {
         OwnedFragment representative() { return fragments.getFirst(); }
         int placedCount(Set<UUID> used) {

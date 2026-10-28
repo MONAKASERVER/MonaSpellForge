@@ -26,6 +26,13 @@ public final class ArcVerifier {
                 issues.add(new Issue("ARC-V4004", pc, "invalid jump target"));
             if (instruction.op() == Op.MAKE_LIST && (instruction.number() < 0 || instruction.number() > ArcVm.MAX_LIST))
                 issues.add(new Issue("ARC-V4005", pc, "invalid list size"));
+            if (instruction.op() == Op.MAKE_STRUCT) {
+                int separator = instruction.text().indexOf('\u0000');
+                String[] fields = separator < 0 || separator == instruction.text().length() - 1 ? new String[0]
+                        : instruction.text().substring(separator + 1).split(",", -1);
+                if (separator < 1 || instruction.number() < 0 || instruction.number() > 32 || fields.length != instruction.number())
+                    issues.add(new Issue("ARC-V4013", pc, "invalid struct descriptor"));
+            }
             if (instruction.op() == Op.MAKE_VARIANT && (instruction.number() < 0 || instruction.number() > 1 || instruction.text().isBlank()))
                 issues.add(new Issue("ARC-V4009", pc, "invalid variant"));
             if ((instruction.op() == Op.IS_VARIANT || instruction.op() == Op.UNWRAP_VARIANT) && instruction.text().isBlank())

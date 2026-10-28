@@ -165,6 +165,9 @@ public final class ArcVm {
                                 default -> throw new Trap("ARC-R3020", "unknown variant member");
                             };
                             push(stack, safe(value));
+                        } else if (receiver instanceof StructValue struct) {
+                            if (!struct.fields().containsKey(instruction.text())) throw new Trap("ARC-R3031", "unknown struct field");
+                            push(stack, safe(struct.fields().get(instruction.text())));
                         } else if (receiver instanceof List<?> list) {
                             Object value = switch (instruction.text()) {
                                 case "count", "length" -> (long) list.size();
@@ -181,6 +184,20 @@ public final class ArcVm {
                         List<Object> values = new ArrayList<>(count);
                         for (int i = 0; i < count; i++) values.add(0, unwrap(pop(stack)));
                         push(stack, List.copyOf(values));
+                    }
+                    case MAKE_STRUCT -> {
+                        int separator = instruction.text().indexOf('\u0000');
+                        int count = Math.toIntExact(instruction.number());
+                        if (separator < 1 || count < 0 || count > 32 || count > stack.size())
+                            throw new Trap("ARC-R3030", "invalid struct descriptor");
+                        String[] fields = instruction.text().substring(separator + 1).isEmpty() ? new String[0]
+                                : instruction.text().substring(separator + 1).split(",", -1);
+                        if (fields.length != count) throw new Trap("ARC-R3030", "invalid struct fields");
+                        Object[] fieldValues = new Object[count];
+                        for (int i = count - 1; i >= 0; i--) fieldValues[i] = unwrap(pop(stack));
+                        Map<String, Object> values = new LinkedHashMap<>();
+                        for (int i = 0; i < count; i++) values.put(fields[i], fieldValues[i]);
+                        push(stack, new StructValue(instruction.text().substring(0, separator), values));
                     }
                     case MAKE_VARIANT -> {
                         if (instruction.number() == 0) push(stack, Variant.empty(instruction.text()));

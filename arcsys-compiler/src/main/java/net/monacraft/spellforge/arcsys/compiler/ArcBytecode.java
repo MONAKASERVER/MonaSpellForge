@@ -1,5 +1,7 @@
 package net.monacraft.spellforge.arcsys.compiler;
 
+import net.monacraft.spellforge.arcsys.language.SourceModel.Span;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -16,14 +18,14 @@ import java.util.TreeMap;
 public final class ArcBytecode {
     private ArcBytecode() { }
 
-    public static final int FORMAT_VERSION = 4;
+    public static final int FORMAT_VERSION = 5;
 
     public enum Op {
         PUSH_NONE, PUSH_BOOL, PUSH_LONG, PUSH_DOUBLE, PUSH_STRING,
         LOAD, STORE, POP, DUP,
         ADD, SUB, MUL, DIV, MOD, NEGATE, NOT,
         EQ, NE, LT, LE, GT, GE, AND, OR,
-        GET_MEMBER, MAKE_LIST,
+        GET_MEMBER, MAKE_LIST, MAKE_STRUCT,
         MAKE_VARIANT, IS_VARIANT, UNWRAP_VARIANT, COERCE_RESULT,
         CALL_HOST, CALL,
         SUSPEND, PARALLEL,
@@ -41,6 +43,18 @@ public final class ArcBytecode {
         public static Variant of(String tag, Object value) { return new Variant(tag, value, true); }
     }
 
+    /** Immutable nominal value for a user-defined struct. */
+    public record StructValue(String type, Map<String, Object> fields) {
+        public StructValue {
+            if (type == null || type.isBlank()) throw new IllegalArgumentException("type");
+            fields = Map.copyOf(new java.util.LinkedHashMap<>(fields));
+        }
+    }
+
+    public record SourceSite(String module, Span span) {
+        public SourceSite { module = module == null || module.isBlank() ? "<main>" : module; }
+    }
+
     public record Instruction(Op op, String text, long number, double decimal) {
         public Instruction {
             if (op == null) throw new IllegalArgumentException("op");
@@ -54,19 +68,27 @@ public final class ArcBytecode {
 
     public record Program(String spellName, List<Instruction> instructions,
                           Map<String, Integer> entryPoints, Set<String> capabilities,
-                          Set<String> requirements, int estimatedFuel) {
+                          Set<String> requirements, int estimatedFuel,
+                          Map<Integer, SourceSite> sourceMap) {
         public Program {
             instructions = List.copyOf(instructions);
             entryPoints = Map.copyOf(new TreeMap<>(entryPoints));
             capabilities = Set.copyOf(capabilities);
             requirements = Set.copyOf(requirements);
+            sourceMap = Map.copyOf(new TreeMap<>(sourceMap));
         }
+        public Program(String spellName, List<Instruction> instructions, Map<String, Integer> entryPoints,
+                       Set<String> capabilities, Set<String> requirements, int estimatedFuel) {
+            this(spellName, instructions, entryPoints, capabilities, requirements, estimatedFuel, Map.of());
+        }
+
+        public SourceSite sourceAt(int pc) { return sourceMap.get(pc); }
 
         public byte[] encode() {
             try {
                 ByteArrayOutputStream bytes = new ByteArrayOutputStream();
                 DataOutputStream out = new DataOutputStream(bytes);
-                out.writeInt(0x41524334); // ARC4
+                out.writeInt(0x41524335); // ARC5
                 out.writeInt(FORMAT_VERSION);
                 writeUtf8(out, spellName);
                 out.writeInt(entryPoints.size());
@@ -87,6 +109,13 @@ public final class ArcBytecode {
                     writeUtf8(out, instruction.text());
                     out.writeLong(instruction.number());
                     out.writeDouble(instruction.decimal());
+                }
+                out.writeInt(sourceMap.size());
+                for (var entry : new TreeMap<>(sourceMap).entrySet()) {
+                    out.writeInt(entry.getKey()); writeUtf8(out, entry.getValue().module());
+                    Span span = entry.getValue().span();
+                    out.writeInt(span.start().offset()); out.writeInt(span.start().line()); out.writeInt(span.start().column());
+                    out.writeInt(span.end().offset()); out.writeInt(span.end().line()); out.writeInt(span.end().column());
                 }
                 out.flush();
                 return bytes.toByteArray();

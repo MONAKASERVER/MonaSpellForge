@@ -2,6 +2,17 @@
 
 更新: 2026-10-28
 
+## 2.0.0-alpha.4 — ArcSys Project / Source Tooling
+
+- ユーザー定義`struct`とpayload付き`enum`を追加し、型検査・コンストラクタ・フィールド参照・網羅性警告・VM実行まで接続
+- `module` / `use ... as ...`、最大32moduleの有界リンカー、循環import・欠損module・名前衝突の拒否を実装
+- 複数moduleを1Revisionとして保存する決定的project bundleを追加し、Paperで再コンパイルしてから実行
+- bytecode PCからmodule・行・列へ戻せるソースマップと、命令/Host API/ソース行/stack/fuelのArcVMプロファイラーを追加
+- VS Codeにproject収集と`ArcSys: Profile Current Spell`を追加
+- ノード、配線、座標、parameterを署名付き`.arc`キャリアへ完全可逆化。取込時は所持欠片個体へ安全に再割当て
+- HEALをHP5につき最低200 MPへ再調整し、増幅・POWER込みでも比率を下回らないコンパイラ下限を追加
+- alpha.4は本番未導入
+
 ## 2.0.0-alpha.3 — ArcSys Magic Language Foundation
 
 - 魔術API定義を単一の `ArcMagicApiCatalog` に統合し、コンパイラ・型検査・VS Code補完の差異を排除

@@ -34,12 +34,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('arcsys.compile', () => sourceRequest('compile'));
   register('arcsys.deploy', () => sourceRequest('deploy'));
   register('arcsys.simulate', () => sourceRequest('simulate'));
+  register('arcsys.profile', () => sourceRequest('profile'));
   register('arcsys.debug', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'arcsys') throw new Error('ArcSys (.arc) ファイルを開いてください');
     const watchesRaw = await vscode.window.showInputBox({ title: 'ArcSys Watch', prompt: '監視する変数名（カンマ区切り、省略可）' });
     const result = await requireBridge().request('debugStart', {
-      source: editor.document.getText(), watches: (watchesRaw ?? '').split(',').map(v => v.trim()).filter(Boolean), breakpoints: []
+      ...(await projectPayload(editor.document)), watches: (watchesRaw ?? '').split(',').map(v => v.trim()).filter(Boolean), breakpoints: []
     }) as { debugSessionId?: string };
     debugSessionId = result.debugSessionId; showDebugResult('start', result);
   });
@@ -92,12 +93,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await vscode.window.showTextDocument(document);
   });
 
-  async function sourceRequest(type: 'validate' | 'compile' | 'deploy' | 'simulate' | 'debugStart' | 'nodeGraph'): Promise<void> {
+  async function sourceRequest(type: 'validate' | 'compile' | 'deploy' | 'simulate' | 'profile' | 'debugStart' | 'nodeGraph'): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'arcsys') throw new Error('ArcSys (.arc) ファイルを開いてください');
     const metadata = spellMetadata.get(editor.document.uri.toString());
     const result = await requireBridge().request(type, {
-      source: editor.document.getText(), uri: editor.document.uri.toString(), explicit: true,
+      ...(await projectPayload(editor.document)), uri: editor.document.uri.toString(), explicit: true,
       spellId: metadata?.spellId, baseRevision: metadata?.revision ?? 0
     }) as { spellId?: string; revision?: number };
     if (type === 'deploy' && result.spellId && result.revision !== undefined)
@@ -105,6 +106,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     output.appendLine(`[${new Date().toISOString()}] ${type}\n${JSON.stringify(result, null, 2)}`); output.show(true);
     vscode.window.showInformationMessage(`ArcSys ${type} 完了`);
     if (type === 'deploy') await refreshStudio(studio);
+  }
+
+  async function projectPayload(document: vscode.TextDocument): Promise<Record<string, unknown>> {
+    const source = document.getText();
+    const rootModule = moduleName(source) ?? path.basename(document.fileName, '.arc');
+    if (document.uri.scheme !== 'file' || !/\buse\s+[A-Za-z_][\w.]*/.test(source)) return { source };
+    const modules: Record<string, string> = {};
+    const files = await vscode.workspace.findFiles('**/*.arc', '**/{node_modules,.git,build,out}/**', 32);
+    for (const uri of files) {
+      const candidate = await vscode.workspace.openTextDocument(uri); const text = candidate.getText();
+      const name = moduleName(text);
+      if (name) modules[name] = text;
+    }
+    modules[rootModule] = source;
+    const payload = { source, rootModule, modules };
+    if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > 55_000)
+      throw new Error('ArcSys projectがFabric Bridgeの転送上限を超えています');
+    return payload;
+  }
+
+  function moduleName(source: string): string | undefined {
+    return /^\s*module\s+([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)\s*;/m.exec(source)?.[1];
   }
 
   async function continueDebug(mode: 'continue' | 'step'): Promise<void> {

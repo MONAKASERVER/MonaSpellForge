@@ -44,4 +44,12 @@ class FragmentCatalogTest {
         assertEquals(100.0, configured.get("ARCSYS_CORE").levels().get(5).manaCost());
         assertEquals(25, configured.get("ARCSYS_CORE").levels().get(5).runtimeCost());
     }
+
+    @Test void healCostsAtLeastTwoHundredManaPerFiveHp() {
+        var heal = FragmentCatalog.defaults().get("HEAL");
+        heal.levels().values().forEach(parameters ->
+                assertTrue(parameters.manaCost() + 1e-9 >= parameters.power() / 5.0 * 200.0));
+        assertEquals(5.0, heal.levels().get(1).power());
+        assertEquals(200.0, heal.levels().get(1).manaCost());
+    }
 }

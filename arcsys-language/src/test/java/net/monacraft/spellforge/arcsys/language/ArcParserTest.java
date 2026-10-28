@@ -194,4 +194,31 @@ class ArcParserTest {
             """);
         assertTrue(result.valid(), () -> result.diagnostics().toString());
     }
+
+    @Test void parsesModulesStructsEnumsAndChecksExhaustiveMatch() {
+        var parsed = ArcParser.parse("""
+            module monaka.combat;
+            use monaka.shared as shared;
+            struct TargetInfo { target: Entity, power: Number }
+            enum Decision { Strike(TargetInfo), Wait }
+            spell X { on cast {
+              let info: TargetInfo = TargetInfo(target: target, power: 4);
+              let decision: Decision = Decision::Strike(info);
+              return match decision {
+                Decision::Strike(value) => value.power,
+                Decision::Wait => 0
+              };
+            } }
+            """);
+        assertTrue(parsed.valid(), () -> parsed.diagnostics().toString());
+        assertEquals("monaka.combat", parsed.program().module().name());
+        assertEquals("shared", parsed.program().imports().getFirst().alias());
+        assertEquals(2, parsed.program().types().size());
+        assertTrue(new ArcTypeChecker().check(parsed.program()).stream()
+                .noneMatch(d -> d.severity() == SourceModel.Severity.ERROR),
+                () -> new ArcTypeChecker().check(parsed.program()).toString());
+
+        var nonExhaustive = ArcParser.parse("enum Mode { A, B } spell X { on cast { let m: Mode = Mode::A; return match m { Mode::A => 1 }; } }");
+        assertTrue(new ArcTypeChecker().check(nonExhaustive.program()).stream().anyMatch(d -> d.code().equals("ARC-TW5014")));
+    }
 }

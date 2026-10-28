@@ -95,6 +95,16 @@ public final class CircuitCompiler {
             mana += level.manaCost(); runtime += level.runtimeCost();
             if (definition.id().equals("REPEAT")) runtime *= Math.min(8, Math.max(1, parseInt(node.parameters().get("count"), node.level() + 1)));
         }
+        CircuitNode heal = circuit.nodes().stream().filter(node -> node.fragmentId().equals("HEAL")).findFirst().orElse(null);
+        if (heal != null && resolved.containsKey(heal.nodeId()) && resolved.get(heal.nodeId()).levels().containsKey(heal.level())) {
+            double healing = resolved.get(heal.nodeId()).levels().get(heal.level()).power();
+            CircuitNode power = circuit.nodes().stream().filter(node -> node.fragmentId().equals("POWER")).findFirst().orElse(null);
+            if (power != null) healing *= 1 + power.level() * 0.22;
+            healing *= circuit.nodes().stream().anyMatch(node -> node.fragmentId().equals("AMPLIFY_X4")) ? 4
+                    : circuit.nodes().stream().anyMatch(node -> node.fragmentId().equals("AMPLIFY_X3")) ? 3
+                    : circuit.nodes().stream().anyMatch(node -> node.fragmentId().equals("AMPLIFY_X2")) ? 2 : 1;
+            mana = Math.max(mana, Math.ceil(healing / 5.0) * 200.0);
+        }
         if (runtime > MAX_RUNTIME_COST) error(issues, "RUNTIME_BUDGET", null, "実行負荷 " + runtime + " が上限 " + MAX_RUNTIME_COST + " を超えています", "反復・分裂・高負荷ノードを減らしてください");
         if (issues.stream().anyMatch(issue -> issue.severity() == Severity.ERROR)) return new CompilationResult(null, issues);
         List<CircuitNode> execution = order.stream().map(nodes::get).toList();

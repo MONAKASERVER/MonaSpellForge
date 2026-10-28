@@ -1,12 +1,14 @@
 package net.monacraft.spellforge.arcsys.compiler;
 
 import net.monacraft.spellforge.arcsys.compiler.ArcBytecode.*;
+import net.monacraft.spellforge.arcsys.language.ArcAst;
 import net.monacraft.spellforge.arcsys.language.ArcAst.*;
 import net.monacraft.spellforge.arcsys.language.ArcParser;
 import net.monacraft.spellforge.arcsys.language.ArcTypeChecker;
 import net.monacraft.spellforge.arcsys.language.ArcMagicApiCatalog;
 import net.monacraft.spellforge.arcsys.language.SourceModel.Diagnostic;
 import net.monacraft.spellforge.arcsys.language.SourceModel.Severity;
+import net.monacraft.spellforge.arcsys.language.SourceModel.Span;
 import net.monacraft.spellforge.arcsys.language.Token.Type;
 
 import java.util.*;
@@ -23,16 +25,33 @@ public final class ArcCompiler {
     public CompileResult compile(String source) {
         var parsed = ArcParser.parse(source);
         List<Diagnostic> diagnostics = new ArrayList<>(parsed.diagnostics());
-        if (!parsed.valid() || parsed.program().spells().isEmpty()) return new CompileResult(null, diagnostics);
-        diagnostics.addAll(new ArcTypeChecker().check(parsed.program()));
+        if (!parsed.valid()) return new CompileResult(null, diagnostics);
+        return compile(parsed.program(), diagnostics);
+    }
+
+    public CompileResult compile(ArcAst.Program source) {
+        return compile(source, new ArrayList<>(), Map.of());
+    }
+
+    public CompileResult compile(ArcAst.Program source, Map<ArcAst.Node, String> sourceModules) {
+        return compile(source, new ArrayList<>(), sourceModules);
+    }
+
+    private CompileResult compile(ArcAst.Program source, List<Diagnostic> diagnostics) {
+        return compile(source, diagnostics, Map.of());
+    }
+
+    private CompileResult compile(ArcAst.Program source, List<Diagnostic> diagnostics, Map<ArcAst.Node, String> sourceModules) {
+        if (source.spells().isEmpty()) return new CompileResult(null, diagnostics);
+        diagnostics.addAll(new ArcTypeChecker().check(source));
         if (diagnostics.stream().anyMatch(d -> d.severity() == Severity.ERROR)) return new CompileResult(null, diagnostics);
-        if (parsed.program().spells().size() != 1) {
+        if (source.spells().size() != 1) {
             diagnostics.add(new Diagnostic("ARC-E2001", Severity.ERROR, "1ファイルには術式を1つだけ定義できます",
-                parsed.program().span(), "spell 定義を別ファイルへ分割してください"));
+                source.span(), "spell 定義を別ファイルへ分割してください"));
             return new CompileResult(null, diagnostics);
         }
-        Builder builder = new Builder(diagnostics);
-        ArcBytecode.Program program = builder.compile(parsed.program().spells().getFirst());
+        Builder builder = new Builder(diagnostics, source.module(), source.types(), sourceModules);
+        ArcBytecode.Program program = builder.compile(source.spells().getFirst());
         return new CompileResult(diagnostics.stream().anyMatch(d -> d.severity() == Severity.ERROR) ? null : program, diagnostics);
     }
 
@@ -49,6 +68,13 @@ public final class ArcCompiler {
         private final Map<String, Integer> entries = new TreeMap<>();
         private final Set<String> capabilities = new TreeSet<>();
         private final List<Diagnostic> diagnostics;
+        private final Map<Integer, SourceSite> sourceMap = new TreeMap<>();
+        private final String moduleName;
+        private final Map<ArcAst.Node, String> sourceModules;
+        private final Map<String, StructDecl> structs;
+        private final Map<String, EnumDecl> enums;
+        private Span activeSpan;
+        private String activeModule;
         private int synthetic;
         private int fuel;
         private Set<String> stateNames = Set.of();
@@ -62,7 +88,17 @@ public final class ArcCompiler {
         private final List<PendingBranch> pendingBranches = new ArrayList<>();
         private boolean compilingDeferred;
 
-        private Builder(List<Diagnostic> diagnostics) { this.diagnostics = diagnostics; }
+        private Builder(List<Diagnostic> diagnostics, ModuleDecl module, List<TypeDecl> types,
+                        Map<ArcAst.Node, String> sourceModules) {
+            this.diagnostics = diagnostics;
+            this.moduleName = module == null ? "<main>" : module.name();
+            this.activeModule = moduleName;
+            this.sourceModules = new IdentityHashMap<>(sourceModules);
+            this.structs = types.stream().filter(StructDecl.class::isInstance).map(StructDecl.class::cast)
+                    .collect(java.util.stream.Collectors.toUnmodifiableMap(StructDecl::name, value -> value));
+            this.enums = types.stream().filter(EnumDecl.class::isInstance).map(EnumDecl.class::cast)
+                    .collect(java.util.stream.Collectors.toUnmodifiableMap(EnumDecl::name, value -> value));
+        }
 
         ArcBytecode.Program compile(SpellDecl spell) {
             stateNames = spell.states().stream().filter(value -> value.binding() == Binding.STATE).map(VarDecl::name)
@@ -102,10 +138,12 @@ public final class ArcCompiler {
                 String entry = "fn:" + function.name();
                 if (entries.putIfAbsent(entry, code.size()) != null) error("ARC-E2003", "関数名が重複しています: " + function.name(), function, "名前を変更してください");
                 currentFunction = function;
+                String previousModule = activeModule; Span previousSpan = activeSpan;
+                activeModule = sourceModules.getOrDefault(function, moduleName); activeSpan = function.span();
                 List<String> parameters = function.parameters();
                 for (int index = parameters.size() - 1; index >= 0; index--) emit(STORE, parameters.get(index), 0, 0);
                 block(function.body()); emit(PUSH_NONE); emit(RETURN);
-                currentFunction = null;
+                currentFunction = null; activeModule = previousModule; activeSpan = previousSpan;
             }
             for (int index = 0; index < pendingBranches.size(); index++) compilePendingBranch(pendingBranches.get(index));
             emit(HALT);
@@ -113,7 +151,8 @@ public final class ArcCompiler {
             Set<String> requirements = new TreeSet<>();
             spell.requiredFragments().forEach((id, level) -> requirements.add("fragment:" + id + ":" + level));
             spell.requiredPermissions().forEach(permission -> requirements.add("permission:" + permission));
-            return new ArcBytecode.Program(spell.name(), code, entries, capabilities, requirements, Math.max(fuel, code.size()));
+            return new ArcBytecode.Program(spell.name(), code, entries, capabilities, requirements,
+                    Math.max(fuel, code.size()), sourceMap);
         }
 
         void block(Block block) {
@@ -124,7 +163,8 @@ public final class ArcCompiler {
         }
 
         void statement(Stmt stmt) {
-            switch (stmt) {
+            Span previousSpan = activeSpan; activeSpan = stmt.span();
+            try { switch (stmt) {
                 case Block b -> block(b);
                 case VarDecl v -> { expression(v.initializer()); emit(STORE, v.name(), 0, 0); }
                 case ExprStmt e -> { expression(e.expression()); emit(POP); }
@@ -163,7 +203,7 @@ public final class ArcCompiler {
                     else if (loops.isEmpty()) error("ARC-E2011", "continue はループ内だけで使用できます", stmt, "forまたはrepeat内へ移動してください");
                     else { emitDeferredFrom(loops.peek().deferDepth); loops.peek().continues.add(jump(JUMP)); }
                 }
-            }
+            } } finally { activeSpan = previousSpan; }
         }
 
         void emitAllDeferred() { emitDeferredFrom(0); }
@@ -212,7 +252,8 @@ public final class ArcCompiler {
         }
 
         void expression(Expr expr) {
-            switch (expr) {
+            Span previousSpan = activeSpan; activeSpan = expr.span();
+            try { switch (expr) {
                 case Literal l -> literal(l.value());
                 case Variable v -> emit(LOAD, v.name(), 0, 0);
                 case ListExpr l -> { for (Expr value : l.values()) expression(value); emit(MAKE_LIST, "", l.values().size(), 0); }
@@ -235,8 +276,10 @@ public final class ArcCompiler {
                 }
                 case Member m -> {
                     String qualified = qualifiedName(m);
+                    String enumTag = enumTag(qualified);
                     ApiDefinition zeroArg = qualified == null ? null : APIS.get(qualified);
-                    if (zeroArg != null && zeroArg.minArgs() == 0 && zeroArg.maxArgs() == 0) {
+                    if (enumTag != null) emit(MAKE_VARIANT, enumTag, 0, 0);
+                    else if (zeroArg != null && zeroArg.minArgs() == 0 && zeroArg.maxArgs() == 0) {
                         validateEffectCall(m, qualified, zeroArg);
                         emit(CALL_HOST, qualified + "\u0000", 0, 0); capabilities.add(zeroArg.capability()); fuel += zeroArg.fuel();
                     } else { expression(m.receiver()); emit(GET_MEMBER, m.name(), 0, 0); }
@@ -250,7 +293,7 @@ public final class ArcCompiler {
                 case TryExpr t -> tryExpression(t);
                 case BlockExpr b -> { block(b.body()); emit(PUSH_NONE); }
                 case ParallelExpr p -> parallelExpression(p);
-            }
+            } } finally { activeSpan = previousSpan; }
         }
 
         void parallelExpression(ParallelExpr parallel) {
@@ -300,7 +343,7 @@ public final class ArcCompiler {
                 if (!(arm.pattern() instanceof WildcardPattern)) {
                     emit(LOAD, subject, 0, 0);
                     if (arm.pattern() instanceof LiteralPattern literal) { literal(literal.value()); emit(EQ); }
-                    else if (arm.pattern() instanceof EnumPattern enumeration) { emit(PUSH_STRING, enumeration.name(), 0, 0); emit(EQ); }
+                    else if (arm.pattern() instanceof EnumPattern enumeration) { emit(IS_VARIANT, normalizeEnumTag(enumeration.name()), 0, 0); }
                     else if (arm.pattern() instanceof VariantPattern variant) { emit(IS_VARIANT, variant.tag(), 0, 0); }
                     else if (arm.pattern() instanceof RangePattern range) {
                         emit(DUP); literal(range.start()); emit(GE);
@@ -332,8 +375,22 @@ public final class ArcCompiler {
                 emit(MAKE_VARIANT, api, 1, 0);
                 return;
             }
+            if (api != null && structs.containsKey(api)) {
+                compileStruct(call, structs.get(api));
+                return;
+            }
+            String enumTag = enumTag(api);
+            if (enumTag != null) {
+                if (call.arguments().size() > 1 || call.arguments().stream().anyMatch(argument -> argument.name() != null)) {
+                    error("ARC-E2044", "enum payloadは位置引数0〜1個です", call, enumTag.replace('.', ':') + "(value) の形で使用してください");
+                    emit(PUSH_NONE); return;
+                }
+                if (!call.arguments().isEmpty()) expression(call.arguments().getFirst().value());
+                emit(MAKE_VARIANT, enumTag, call.arguments().isEmpty() ? 0 : 1, 0);
+                return;
+            }
             ApiDefinition definition = api == null ? null : APIS.get(api);
-            if (definition == null && api != null && !api.contains(".") && functionNames.contains(api)) {
+            if (definition == null && api != null && functionNames.contains(api)) {
                 FunctionDecl target = functionDecls.get(api);
                 if (currentFunction != null && !currentFunction.effectful() && target != null && target.effectful())
                     error("ARC-E2042", "pure fnからeffect fnは呼び出せません: " + api, call, "呼出元をeffect fnに変更してください");
@@ -379,6 +436,35 @@ public final class ArcCompiler {
             if (RESULT_APIS.contains(api)) emit(COERCE_RESULT);
             capabilities.add(definition.capability());
             fuel += definition.fuel();
+        }
+
+        void compileStruct(Call call, StructDecl struct) {
+            Map<String, CallArg> named = new HashMap<>();
+            for (CallArg argument : call.arguments()) if (argument.name() != null) named.put(argument.name(), argument);
+            List<String> fieldNames = new ArrayList<>();
+            for (int index = 0; index < struct.fields().size(); index++) {
+                FieldDecl field = struct.fields().get(index); fieldNames.add(field.name());
+                CallArg argument = !named.isEmpty() ? named.get(field.name())
+                        : index < call.arguments().size() ? call.arguments().get(index) : null;
+                if (argument == null) emit(PUSH_NONE); else expression(argument.value());
+            }
+            emit(MAKE_STRUCT, struct.name() + "\u0000" + String.join(",", fieldNames), fieldNames.size(), 0);
+        }
+
+        String enumTag(String qualified) {
+            if (qualified == null) return null;
+            int split = qualified.lastIndexOf('.'); if (split < 1) return null;
+            EnumDecl declaration = enums.get(qualified.substring(0, split));
+            if (declaration == null) return null;
+            String variant = qualified.substring(split + 1);
+            return declaration.variants().stream().anyMatch(value -> value.name().equals(variant))
+                    ? declaration.name() + "::" + variant : null;
+        }
+
+        String normalizeEnumTag(String value) {
+            if (value.contains("::")) return value;
+            int split = value.lastIndexOf('.');
+            return split < 0 ? value : value.substring(0, split) + "::" + value.substring(split + 1);
         }
 
         void validateEffectCall(net.monacraft.spellforge.arcsys.language.ArcAst.Node call, String api, ApiDefinition definition) {
@@ -451,7 +537,11 @@ public final class ArcCompiler {
         void patch(int at) { Instruction old = code.get(at); code.set(at, new Instruction(old.op(), old.text(), code.size(), old.decimal())); }
         void patchTo(int at, int target) { Instruction old = code.get(at); code.set(at, new Instruction(old.op(), old.text(), target, old.decimal())); }
         void emit(Op op) { emit(op, "", 0, 0); }
-        void emit(Op op, String text, long number, double decimal) { code.add(new Instruction(op, text, number, decimal)); fuel++; }
+        void emit(Op op, String text, long number, double decimal) {
+            int pc = code.size(); code.add(new Instruction(op, text, number, decimal));
+            if (activeSpan != null) sourceMap.put(pc, new SourceSite(activeModule, activeSpan));
+            fuel++;
+        }
         void error(String code, String message, net.monacraft.spellforge.arcsys.language.ArcAst.Node node, String suggestion) {
             diagnostics.add(new Diagnostic(code, Severity.ERROR, message, node.span(), suggestion));
         }

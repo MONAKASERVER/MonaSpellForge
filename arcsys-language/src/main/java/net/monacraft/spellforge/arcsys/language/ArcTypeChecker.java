@@ -12,20 +12,22 @@ import java.util.*;
 public final class ArcTypeChecker {
     public enum Kind {
         ANY, NONE, BOOL, INT, FLOAT, NUMBER, STRING, DURATION, DISTANCE, MANA, PERCENT,
-        LIST, ENTITY, LOCATION, WORLD, VECTOR, BLOCK, ITEM, OPTION, RESULT
+        LIST, ENTITY, LOCATION, WORLD, VECTOR, BLOCK, ITEM, OPTION, RESULT, STRUCT, ENUM
     }
 
-    public record ArcType(Kind kind, ArcType element, ArcType error) {
-        public ArcType(Kind kind, ArcType element) { this(kind, element, null); }
-        public static ArcType of(Kind kind) { return new ArcType(kind, null, null); }
-        public static ArcType list(ArcType element) { return new ArcType(Kind.LIST, element, null); }
-        public static ArcType option(ArcType element) { return new ArcType(Kind.OPTION, element, null); }
-        public static ArcType result(ArcType ok, ArcType error) { return new ArcType(Kind.RESULT, ok, error); }
+    public record ArcType(Kind kind, ArcType element, ArcType error, String nominal) {
+        public ArcType(Kind kind, ArcType element) { this(kind, element, null, null); }
+        public ArcType(Kind kind, ArcType element, ArcType error) { this(kind, element, error, null); }
+        public static ArcType of(Kind kind) { return new ArcType(kind, null, null, null); }
+        public static ArcType nominal(Kind kind, String name) { return new ArcType(kind, null, null, name); }
+        public static ArcType list(ArcType element) { return new ArcType(Kind.LIST, element, null, null); }
+        public static ArcType option(ArcType element) { return new ArcType(Kind.OPTION, element, null, null); }
+        public static ArcType result(ArcType ok, ArcType error) { return new ArcType(Kind.RESULT, ok, error, null); }
         boolean numeric() { return kind == Kind.INT || kind == Kind.FLOAT || kind == Kind.NUMBER; }
         String display() {
             if (kind == Kind.RESULT) return "Result<" + typeName(element) + ", " + typeName(error) + ">";
             if (kind == Kind.LIST || kind == Kind.OPTION) return kindName(kind) + "<" + typeName(element) + ">";
-            return kindName(kind);
+            return nominal == null ? kindName(kind) : nominal;
         }
         private static String typeName(ArcType type) { return type == null ? "Any" : type.display(); }
         private static String kindName(Kind value) {
@@ -47,12 +49,33 @@ public final class ArcTypeChecker {
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private final Deque<Map<String, Symbol>> scopes = new ArrayDeque<>();
     private Map<String, FunctionSignature> functions = Map.of();
+    private Map<String, StructDecl> structs = Map.of();
+    private Map<String, EnumDecl> enums = Map.of();
     private FunctionDecl currentFunction;
 
     public List<Diagnostic> check(ArcAst.Program program) {
         diagnostics.clear(); scopes.clear();
+        collectTypes(program.types());
         for (SpellDecl spell : program.spells()) check(spell);
+        structs = Map.of(); enums = Map.of();
         return List.copyOf(diagnostics);
+    }
+
+    private void collectTypes(List<TypeDecl> declarations) {
+        Map<String, StructDecl> structMap = new LinkedHashMap<>();
+        Map<String, EnumDecl> enumMap = new LinkedHashMap<>();
+        for (TypeDecl declaration : declarations) {
+            boolean duplicate = structMap.containsKey(declaration.name()) || enumMap.containsKey(declaration.name());
+            if (duplicate) error("ARC-T5042", "型名が重複しています: " + declaration.name(), declaration, "型名を変更してください");
+            else if (declaration instanceof StructDecl struct) structMap.put(struct.name(), struct);
+            else if (declaration instanceof EnumDecl enumeration) enumMap.put(enumeration.name(), enumeration);
+        }
+        structs = Map.copyOf(structMap); enums = Map.copyOf(enumMap);
+        declarations.forEach(declaration -> {
+            if (declaration instanceof StructDecl struct) struct.fields().forEach(field -> parseDeclared(field.type(), struct));
+            if (declaration instanceof EnumDecl enumeration) enumeration.variants().stream().filter(v -> v.payloadType() != null)
+                    .forEach(variant -> parseDeclared(variant.payloadType(), enumeration));
+        });
     }
 
     private void check(SpellDecl spell) {
@@ -240,13 +263,16 @@ public final class ArcTypeChecker {
         for (MatchArm arm : match.arms()) {
             wildcard |= arm.pattern() instanceof WildcardPattern;
             if (arm.pattern() instanceof VariantPattern variant) variants.add(variant.tag());
+            if (arm.pattern() instanceof EnumPattern enumeration) variants.add(enumeration.name());
             if (arm.pattern() instanceof LiteralPattern pattern && !compatible(subject, literal(pattern.value())))
                 error("ARC-T5012", "match対象とパターンの型が一致しません", match, "同じ型のパターンを使用してください");
-            if (arm.pattern() instanceof VariantPattern && subject.kind() != Kind.RESULT && subject.kind() != Kind.OPTION && subject.kind() != Kind.ANY)
-                error("ARC-T5016", "バリアントパターンはOptionまたはResultに必要です", match, "Some/NoneまたはOk/Errに使用してください");
+            if (arm.pattern() instanceof VariantPattern && subject.kind() != Kind.RESULT && subject.kind() != Kind.OPTION
+                    && subject.kind() != Kind.ENUM && subject.kind() != Kind.ANY)
+                error("ARC-T5016", "バリアントパターンはOption、Resultまたはenumに必要です", match, "対応するバリアントに使用してください");
             scopes.push(new HashMap<>());
             if (arm.pattern() instanceof VariantPattern variant && variant.binding() != null) {
-                ArcType binding = variant.tag().equals("Err") ? subject.error() : subject.element();
+                ArcType binding = variant.tag().equals("Err") ? subject.error() : subject.kind() == Kind.ENUM
+                        ? enumPayload(subject.nominal(), variant.tag()) : subject.element();
                 define(variant.binding(), binding == null ? ANY : binding, false);
             }
             ArcType armType = infer(arm.value()); scopes.pop();
@@ -254,7 +280,9 @@ public final class ArcTypeChecker {
             else if (!compatible(result, armType)) error("ARC-T5013", "match各アームの結果型が一致しません", arm.value(), "全アームで同じ型を返してください");
         }
         boolean exhaustive = subject.kind() == Kind.RESULT && variants.containsAll(Set.of("Ok", "Err"))
-                || subject.kind() == Kind.OPTION && variants.containsAll(Set.of("Some", "None"));
+                || subject.kind() == Kind.OPTION && variants.containsAll(Set.of("Some", "None"))
+                || subject.kind() == Kind.ENUM && enumVariants(subject.nominal()).stream()
+                        .allMatch(name -> variants.contains(subject.nominal() + "::" + name) || variants.contains(name));
         if (!wildcard && !exhaustive) warning("ARC-TW5014", "matchが全ケースを処理する保証がありません", match, "最後に _ => ... を追加してください");
         return result == null ? ANY : result;
     }
@@ -285,11 +313,20 @@ public final class ArcTypeChecker {
 
     private ArcType member(Member member) {
         String qualified = qualified(member);
+        if (qualified != null && enumConstant(qualified) != null) return enumConstant(qualified);
         if (qualified != null) {
             Optional<Api> zeroArg = ArcMagicApiCatalog.find(qualified).filter(api -> api.minArgs() == 0);
             if (zeroArg.isPresent()) return fromCatalog(zeroArg.get().returns());
         }
         ArcType receiver = infer(member.receiver());
+        if (receiver.kind() == Kind.STRUCT) {
+            StructDecl struct = structs.get(receiver.nominal());
+            if (struct != null) for (FieldDecl field : struct.fields()) if (field.name().equals(member.name()))
+                return parseDeclared(field.type(), struct);
+            error("ARC-T5043", receiver.display() + " にfield " + member.name() + " はありません", member,
+                    "struct定義のfield名を確認してください");
+            return ANY;
+        }
         return switch (member.name()) {
             case "hp_ratio", "damage" -> FLOAT;
             case "x", "y", "z" -> receiver.kind() == Kind.LOCATION || receiver.kind() == Kind.VECTOR ? FLOAT : ANY;
@@ -308,6 +345,9 @@ public final class ArcTypeChecker {
         String name = qualified(call.callee());
         if (name == null) { call.arguments().forEach(argument -> infer(argument.value())); return ANY; }
         if (Set.of("Some", "Ok", "Err").contains(name)) return constructorCall(name, call);
+        if (structs.containsKey(name)) return structCall(call, structs.get(name));
+        ArcType enumeration = enumConstant(name);
+        if (enumeration != null) return enumCall(call, name, enumeration);
         Api api = ArcMagicApiCatalog.find(name).orElse(null);
         if (api != null) return apiCall(call, api);
         FunctionSignature function = functions.get(name);
@@ -320,6 +360,38 @@ public final class ArcTypeChecker {
         ArcType value = call.arguments().isEmpty() ? ANY : infer(call.arguments().getFirst().value());
         for (int i = 1; i < call.arguments().size(); i++) infer(call.arguments().get(i).value());
         return switch (name) { case "Some" -> ArcType.option(value); case "Ok" -> ArcType.result(value, ANY); default -> ArcType.result(ANY, value); };
+    }
+
+    private ArcType structCall(Call call, StructDecl struct) {
+        if (call.arguments().size() != struct.fields().size())
+            error("ARC-T5044", struct.name() + " は " + struct.fields().size() + " fieldを必要とします", call,
+                    struct.name() + "(" + String.join(", ", struct.fields().stream().map(f -> f.name() + ": " + f.type()).toList()) + ")");
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < call.arguments().size(); i++) {
+            CallArg argument = call.arguments().get(i); FieldDecl field = null;
+            if (argument.name() != null) {
+                if (!seen.add(argument.name())) error("ARC-T5045", "struct fieldが重複しています: " + argument.name(), call, "fieldを1回だけ指定してください");
+                field = struct.fields().stream().filter(value -> value.name().equals(argument.name())).findFirst().orElse(null);
+            } else if (i < struct.fields().size()) field = struct.fields().get(i);
+            ArcType actual = infer(argument.value());
+            if (field == null) error("ARC-T5046", "未知のstruct fieldです: " + argument.name(), call, "struct定義を確認してください");
+            else if (!compatible(parseDeclared(field.type(), struct), actual))
+                error("ARC-T5047", struct.name() + "." + field.name() + " の型が一致しません", argument.value(), field.type() + " を指定してください");
+        }
+        return ArcType.nominal(Kind.STRUCT, struct.name());
+    }
+
+    private ArcType enumCall(Call call, String qualified, ArcType enumeration) {
+        String variantName = qualified.substring(qualified.lastIndexOf('.') + 1);
+        EnumVariantDecl variant = enumVariant(enumeration.nominal(), variantName);
+        ArcType payload = variant == null || variant.payloadType() == null ? null : parseDeclared(variant.payloadType(), enums.get(enumeration.nominal()));
+        int expected = payload == null ? 0 : 1;
+        if (call.arguments().size() != expected) error("ARC-T5048", qualified + " は引数を " + expected + " 個必要とします", call, "enum定義を確認してください");
+        if (!call.arguments().isEmpty()) {
+            ArcType actual = infer(call.arguments().getFirst().value());
+            if (payload != null && !compatible(payload, actual)) error("ARC-T5049", qualified + " のpayload型が一致しません", call.arguments().getFirst().value(), payload.display() + " を指定してください");
+        }
+        return enumeration;
     }
 
     private ArcType apiCall(Call call, Api api) {
@@ -375,10 +447,55 @@ public final class ArcTypeChecker {
 
     private ArcType parseDeclared(String source, Node node) {
         if (source == null || source.isBlank()) return ANY;
+        String trimmed = source.replace(" ", "");
+        if (structs.containsKey(trimmed)) return ArcType.nominal(Kind.STRUCT, trimmed);
+        if (enums.containsKey(trimmed)) return ArcType.nominal(Kind.ENUM, trimmed);
+        int open = trimmed.indexOf('<');
+        if (open > 0 && trimmed.endsWith(">")) {
+            String raw = trimmed.substring(0, open).toLowerCase(Locale.ROOT);
+            List<String> args = splitTypeArguments(trimmed.substring(open + 1, trimmed.length() - 1));
+            if (raw.equals("list") && args.size() == 1) return ArcType.list(parseDeclared(args.getFirst(), node));
+            if (raw.equals("option") && args.size() == 1) return ArcType.option(parseDeclared(args.getFirst(), node));
+            if (raw.equals("result") && args.size() == 2) return ArcType.result(parseDeclared(args.get(0), node), parseDeclared(args.get(1), node));
+        }
         ValueType parsed = ArcMagicApiCatalog.parseType(source);
         if (parsed.kind() == ArcMagicApiCatalog.Kind.ANY && !source.equalsIgnoreCase("Any"))
             error("ARC-T5040", "未知の型です: " + source, node, "ArcSysの組み込み型を使用してください");
         return fromCatalog(parsed);
+    }
+
+    private List<String> splitTypeArguments(String source) {
+        List<String> result = new ArrayList<>(); int depth = 0, start = 0;
+        for (int i = 0; i < source.length(); i++) {
+            char value = source.charAt(i);
+            if (value == '<') depth++; else if (value == '>') depth--;
+            else if (value == ',' && depth == 0) { result.add(source.substring(start, i)); start = i + 1; }
+        }
+        result.add(source.substring(start)); return result;
+    }
+
+    private ArcType enumConstant(String qualified) {
+        int split = qualified.lastIndexOf('.'); if (split < 1) return null;
+        String type = qualified.substring(0, split), variant = qualified.substring(split + 1);
+        EnumDecl declaration = enums.get(type);
+        if (declaration == null || declaration.variants().stream().noneMatch(value -> value.name().equals(variant))) return null;
+        return ArcType.nominal(Kind.ENUM, type);
+    }
+
+    private ArcType enumPayload(String type, String qualifiedVariant) {
+        String name = qualifiedVariant.contains("::") ? qualifiedVariant.substring(qualifiedVariant.lastIndexOf("::") + 2)
+                : qualifiedVariant.contains(".") ? qualifiedVariant.substring(qualifiedVariant.lastIndexOf('.') + 1) : qualifiedVariant;
+        EnumVariantDecl variant = enumVariant(type, name); EnumDecl declaration = enums.get(type);
+        return variant == null || variant.payloadType() == null ? ANY : parseDeclared(variant.payloadType(), declaration);
+    }
+
+    private EnumVariantDecl enumVariant(String type, String name) {
+        EnumDecl declaration = enums.get(type); if (declaration == null) return null;
+        return declaration.variants().stream().filter(value -> value.name().equals(name)).findFirst().orElse(null);
+    }
+
+    private List<String> enumVariants(String type) {
+        EnumDecl declaration = enums.get(type); return declaration == null ? List.of() : declaration.variants().stream().map(EnumVariantDecl::name).toList();
     }
 
     private boolean alwaysReturns(Block block) {
@@ -427,6 +544,7 @@ public final class ArcTypeChecker {
         if (expected.kind() == Kind.NUMBER && actual.numeric() || actual.kind() == Kind.NUMBER && expected.numeric()) return true;
         if (expected.numeric() && actual.numeric()) return true;
         if (expected.kind() != actual.kind()) return false;
+        if (expected.kind() == Kind.STRUCT || expected.kind() == Kind.ENUM) return Objects.equals(expected.nominal(), actual.nominal());
         if (expected.kind() == Kind.RESULT) return compatible(expected.element(), actual.element()) && compatible(expected.error(), actual.error());
         if (expected.kind() == Kind.LIST || expected.kind() == Kind.OPTION) return compatible(expected.element(), actual.element());
         return true;

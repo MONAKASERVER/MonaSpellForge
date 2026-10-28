@@ -103,3 +103,18 @@ The language server remains advisory. Deploy uses VS Code → authenticated loca
 ## Alpha limitations
 
 User-defined `struct`, `enum`, `trait`, `impl`, cross-file modules and imports are reserved syntax, not a completed nominal type/linking system. `atomic` and `transaction` do not yet roll back external Bukkit effects. Live multiplayer load, proxy and Bedrock client verification remain release blockers; build success is not real-server verification.
+# ArcSys 2.0 alpha.4 型・module・解析機能
+
+```arc
+module monaka.combat;
+use monaka.shared as shared;
+
+struct TargetInfo { target: Entity, power: Number }
+enum Decision { Strike(TargetInfo), Wait }
+```
+
+- `struct`は名前付き引数または定義順の引数で生成し、`value.field`で参照します。
+- `enum`は`Type::Variant`、payload付きvariantは`Type::Variant(value)`で生成し、`match`で展開します。
+- VS Codeは`use`を検出するとワークスペース内の最大32個の`.arc` moduleをFabric Bridge経由で送信します。Paperが全moduleを再解析・再リンク・再コンパイルします。
+- Compile/Simulate/Profile応答にはPC対応のmodule・行・列が含まれます。Profileは命令、Host API、ソース行、最大stack、残fuelを集計します。
+- Fabricの回路出力は`.arc`内の改ざん検出付きcanonical IRを正本とし、ノード・配線・座標・parameterを損失なく再構築します。欠片個体UUIDは移植せず、取込先プレイヤーの正規所持品へ再割当てします。

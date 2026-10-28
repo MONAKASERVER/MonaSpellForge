@@ -82,6 +82,18 @@ class CircuitCompilerTest {
         assertTrue(result.issues().stream().anyMatch(issue -> issue.code().equals("LEVEL_RANGE")));
     }
 
+    @Test void amplifiedHealingKeepsFiveHpPerTwoHundredManaFloor() {
+        CircuitNode trigger = node(0, "RIGHT_CLICK");
+        CircuitNode heal = node(1, "HEAL");
+        CircuitNode amplify = node(2, "AMPLIFY_X4");
+        CircuitNode shape = node(3, "PROJECTILE");
+        CompilationResult result = compiler.compile(circuit(List.of(trigger, heal, amplify, shape), List.of(
+                edge(trigger, "exec_out", heal, "exec_in"), edge(heal, "exec_out", amplify, "exec_in"),
+                edge(amplify, "exec_out", shape, "exec_in"), edge(heal, "element", shape, "element"))));
+        assertTrue(result.valid(), () -> result.issues().toString());
+        assertTrue(result.spell().manaCost() >= 800.0);
+    }
+
     private CircuitNode node(int slot, String id) { return new CircuitNode(UUID.randomUUID(), slot, UUID.randomUUID(), id, 1, Map.of(), slot, 0); }
     private CircuitEdge edge(CircuitNode from, String out, CircuitNode to, String in) { return new CircuitEdge(UUID.randomUUID(), from.nodeId(), out, to.nodeId(), in); }
     private Circuit circuit(List<CircuitNode> nodes, List<CircuitEdge> edges) { Instant now = Instant.now(); return new Circuit(UUID.randomUUID(), owner, "test", 0, 1, nodes, edges, now, now); }

@@ -1,6 +1,6 @@
 # MonaSpellForge
 
-Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.3ではArcSysを魔術専用プログラミング言語として強化し、型付き関数、Minecraft単位型、魔術APIの静的検査、ArcVM、Fabric/VS Code連携を1プロジェクトで管理します。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
+Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.4ではArcSysへユーザー定義`struct / enum`、複数module/import、ソースマップ、ArcVMプロファイラー、可逆な`.arc`―ノード回路変換を追加しました。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
 
 v1.7.0ではFabricエディター下部に攻撃力・DPS・連射力・消費魔力のリアルタイム戦闘指標を追加しました。新しい術式強化として、低負荷で防御を15～55%貫通する `ARMOR_PENETRATION` と、莫大な魔力・実行負荷を使って確定ダメージを与える `TRUE_DAMAGE` を追加しています。
 

@@ -2,7 +2,7 @@ export const MAX_MESSAGE_BYTES = 65_536;
 
 export type BridgeRequestType =
   | 'hello' | 'listSpells' | 'openSpell' | 'compile' | 'validate'
-  | 'deploy' | 'simulate' | 'nodeGraph' | 'debugStart' | 'debugContinue' | 'debugState' | 'debugStop' | 'logs' | 'studioSnapshot'
+  | 'deploy' | 'simulate' | 'profile' | 'nodeGraph' | 'debugStart' | 'debugContinue' | 'debugState' | 'debugStop' | 'logs' | 'studioSnapshot'
   | 'listCores' | 'inspectCore' | 'bindCore' | 'unbindCore' | 'validateCoreBinding' | 'simulateCore';
 
 export interface BridgeRequest {
