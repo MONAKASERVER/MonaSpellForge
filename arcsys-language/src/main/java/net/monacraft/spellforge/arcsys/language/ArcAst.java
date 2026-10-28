@@ -36,11 +36,19 @@ public final class ArcAst {
         }
     }
 
-    public record FunctionDecl(String name, List<String> parameters, boolean effectful,
+    public record FunctionDecl(String name, List<String> parameters, Map<String, String> parameterTypes,
+                               String returnType, boolean effectful,
                                java.util.Set<String> declaredEffects, Block body, Span span) implements Node {
-        public FunctionDecl { parameters = List.copyOf(parameters); declaredEffects = java.util.Set.copyOf(declaredEffects); }
+        public FunctionDecl {
+            parameters = List.copyOf(parameters); parameterTypes = Map.copyOf(parameterTypes);
+            declaredEffects = java.util.Set.copyOf(declaredEffects);
+        }
+        public FunctionDecl(String name, List<String> parameters, boolean effectful,
+                            java.util.Set<String> declaredEffects, Block body, Span span) {
+            this(name, parameters, Map.of(), null, effectful, declaredEffects, body, span);
+        }
         public FunctionDecl(String name, List<String> parameters, Block body, Span span) {
-            this(name, parameters, false, java.util.Set.of(), body, span);
+            this(name, parameters, Map.of(), null, false, java.util.Set.of(), body, span);
         }
     }
 
@@ -66,8 +74,14 @@ public final class ArcAst {
         }
     }
 
-    public record VarDecl(Binding binding, String name, Expr initializer, Persistence persistence, Span span) implements Stmt {
-        public VarDecl(Binding binding, String name, Expr initializer, Span span) { this(binding, name, initializer, null, span); }
+    public record VarDecl(Binding binding, String name, String declaredType, boolean mutable,
+                          Expr initializer, Persistence persistence, Span span) implements Stmt {
+        public VarDecl(Binding binding, String name, Expr initializer, Persistence persistence, Span span) {
+            this(binding, name, null, binding == Binding.STATE, initializer, persistence, span);
+        }
+        public VarDecl(Binding binding, String name, Expr initializer, Span span) {
+            this(binding, name, null, binding == Binding.STATE, initializer, null, span);
+        }
     }
     public record IfStmt(Expr condition, Block thenBranch, Block elseBranch, Span span) implements Stmt { }
     public record ForStmt(String variable, Expr iterable, Block body, Span span) implements Stmt { }

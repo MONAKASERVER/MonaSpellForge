@@ -5,9 +5,10 @@ This document separates implemented execution semantics from accepted design. A 
 ## Implemented in the current development branch
 
 - UTF-8 `.arc` lexer/parser with bounded source, token and nesting limits.
-- `let`, `let mut`, `const`, `state`, block scope, `fn`, typed parameter/return syntax and bounded local calls.
+- `let`, `let mut`, `const`, `state`, block scope、代入可否検査、未定義変数検査、型付き `fn` と有界ローカル呼び出し。
 - `if/else`, expression `match` with literal/range/enum/wildcard patterns, `for`, `repeat`, `break`, `continue`, `guard`.
-- `Int`, `Float`, `Bool`, `String` inference and dimension-aware `Duration`, `Distance`, `Mana`, `Percent` literals.
+- `Int`, `Float`, `Number`, `Bool`, `String`, `Entity`, `Location`, `World`, `Block`, `Item` と、次元を区別する `Duration`, `Distance`, `Mana`, `Percent`。`List<T>`, `Option<T>`, `Result<T,E>` の注釈・引数・戻り値伝播。
+- コンパイラ、型検査、VS Code補完を同じ `ArcMagicApiCatalog` から生成。名前付き引数、必須引数、引数型、API戻り値、単位なし旧構文への警告を一貫して診断。
 - Events: cast, pulse, hit, kill, damage, damage_taken, death, enter, mana_below, spell_end, signal and projectile_impact.
 - `requires fragments` and `requires permission` metadata, Paper-side ownership/permission validation and revision persistence.
 - `chance`, `wait`, `every`, Skript-style `cast ... at ...`, `apply ... to ... for ...` lowering into the same compiler/VM.
@@ -34,7 +35,7 @@ This document separates implemented execution semantics from accepted design. A 
 
 ## Not complete — blocks production deployment
 
-- Full generic propagation for annotated `Option<T>` / `Result<T,E>` signatures and exhaustive user-defined enum checking (the runtime constructors, patterns and `?` semantics are implemented).
+- Exhaustive checking and runtime values for user-defined enums/structs (built-in `Option<T>` / `Result<T,E>` propagation, constructors, patterns and `?` semantics are implemented).
 - Full statement/block match arms and enum/struct runtime values.
 - General-purpose awaitable handles and conditional/event waits outside parallel groups.
 - An explicit operator/player persistent-data erasure command (production ArcVM state read/write is connected; the owner-erasure storage operation exists).
@@ -45,4 +46,4 @@ This document separates implemented execution semantics from accepted design. A 
 - Full VS Code graph editor and lossless code ↔ legacy node conversion.
 - Fuzz, proxy, rollback, sustained Paper load and Java/Bedrock real-client drills. The 1,000-continuation scheduler pressure test is automated, but it is not a substitute for a live server/client run.
 
-The stable production server must remain on the 1.7 line until every blocking item is implemented and verified.
+The production server must remain on its explicitly deployed version. Alpha.3 must not be enabled in production until the remaining blockers are implemented and live-server/client verification is complete.

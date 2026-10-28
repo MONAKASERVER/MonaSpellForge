@@ -2,6 +2,17 @@
 
 更新: 2026-10-28
 
+## 2.0.0-alpha.3 — ArcSys Magic Language Foundation
+
+- 魔術API定義を単一の `ArcMagicApiCatalog` に統合し、コンパイラ・型検査・VS Code補完の差異を排除
+- `Int` / `Float` / `Number` / `Bool` / `String` に加え、`Entity` / `Location` / `World` / `Block` / `Item` と魔術単位型を静的検査
+- `List<T>` / `Option<T>` / `Result<T,E>` の型引数を関数引数・戻り値・API結果・matchへ伝播
+- `let mut` と不変 `let` / `const` / 可変 `state` を区別し、未定義変数・不正代入をコンパイル時に拒否
+- 魔術APIの名前付き引数、重複、必須引数、型、単位を検証。旧式の単位なし数値は互換警告
+- VS Code補完とHoverに正確なシグネチャ、基礎MP、Capability、Effect種別を表示
+- JavaカタログからTypeScript API定義を自動生成するビルドタスクを追加
+- alpha.3は本番未導入
+
 ## 2.0.0-alpha.2 — ARCSYS CORE
 
 - 既存72種を変更せず、73番目のLEGENDARY欠片 `ARCSYS_CORE`（Lv.1〜5）を追加

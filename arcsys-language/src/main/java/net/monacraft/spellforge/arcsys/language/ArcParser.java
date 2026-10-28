@@ -146,15 +146,17 @@ public final class ArcParser {
         Token name = consume(IDENT, "ARC-E1020", "関数名が必要です");
         consume(LEFT_PAREN, "ARC-E1021", "引数リストの '(' が必要です");
         List<String> parameters = new ArrayList<>();
+        Map<String, String> parameterTypes = new LinkedHashMap<>();
         if (!check(RIGHT_PAREN)) {
             do {
                 if (parameters.size() >= 16) throw error(peek(), "ARC-E1022", "関数引数は16個までです", "関数を分割してください");
-                parameters.add(consume(IDENT, "ARC-E1023", "引数名が必要です").lexeme());
-                if (match(COLON)) skipTypeReference();
+                String parameter = consume(IDENT, "ARC-E1023", "引数名が必要です").lexeme();
+                parameters.add(parameter);
+                if (match(COLON)) parameterTypes.put(parameter, readTypeReference(Set.of(COMMA, RIGHT_PAREN)));
             } while (match(COMMA));
         }
         consume(RIGHT_PAREN, "ARC-E1024", "引数リストの ')' が必要です");
-        if (match(ARROW)) skipTypeReferenceBeforeBlock();
+        String returnType = match(ARROW) ? readTypeReference(Set.of(LEFT_BRACE, USES)) : null;
         Set<String> declaredEffects = new LinkedHashSet<>();
         if (match(USES)) {
             consume(LEFT_BRACKET, "ARC-E1026", "usesには'['が必要です");
@@ -165,7 +167,7 @@ public final class ArcParser {
             consume(RIGHT_BRACKET, "ARC-E1028", "usesを閉じる']'が必要です");
         }
         Block body = block();
-        return new FunctionDecl(name.lexeme(), parameters, effectful, declaredEffects, body, join(begin.span(), body.span()));
+        return new FunctionDecl(name.lexeme(), parameters, parameterTypes, returnType, effectful, declaredEffects, body, join(begin.span(), body.span()));
     }
 
     private Block block() {
@@ -210,16 +212,16 @@ public final class ArcParser {
     }
 
     private VarDecl variable(Token begin) {
-        if (begin.type() == LET) match(MUT);
+        boolean mutable = begin.type() == STATE || begin.type() == LET && match(MUT);
         Token name = consume(IDENT, "ARC-E1040", "変数名が必要です");
-        if (match(COLON)) skipTypeReference();
+        String declaredType = match(COLON) ? readTypeReference(Set.of(EQUAL)) : null;
         consume(EQUAL, "ARC-E1041", "変数の初期値が必要です");
         Expr initializer = expression();
         Persistence persistence = null;
         if (match(PERSIST)) persistence = persistence(previous(), begin.type());
         Token end = finishStatement();
         Binding binding = switch (begin.type()) { case LET -> Binding.LET; case CONST -> Binding.CONST; default -> Binding.STATE; };
-        return new VarDecl(binding, name.lexeme(), initializer, persistence, join(begin.span(), end.span()));
+        return new VarDecl(binding, name.lexeme(), declaredType, mutable, initializer, persistence, join(begin.span(), end.span()));
     }
 
     private Persistence persistence(Token begin, Type declarationType) {
@@ -362,24 +364,18 @@ public final class ArcParser {
         return new Member(root, member, span);
     }
 
-    private void skipTypeReference() {
+    private String readTypeReference(Set<Type> terminators) {
+        StringBuilder type = new StringBuilder();
         int genericDepth = 0;
         while (!atEnd()) {
-            if (check(LESS)) { genericDepth++; advance(); continue; }
-            if (check(GREATER) && genericDepth > 0) { genericDepth--; advance(); continue; }
-            if (genericDepth == 0 && (check(EQUAL) || check(COMMA) || check(RIGHT_PAREN))) return;
-            advance();
+            if (genericDepth == 0 && terminators.contains(peek().type())) break;
+            Token token = advance();
+            if (token.type() == LESS) genericDepth++;
+            else if (token.type() == GREATER && genericDepth > 0) genericDepth--;
+            type.append(token.lexeme());
         }
-    }
-
-    private void skipTypeReferenceBeforeBlock() {
-        int genericDepth = 0;
-        while (!atEnd()) {
-            if (check(LESS)) { genericDepth++; advance(); continue; }
-            if (check(GREATER) && genericDepth > 0) { genericDepth--; advance(); continue; }
-            if (genericDepth == 0 && (check(LEFT_BRACE) || check(USES))) return;
-            advance();
-        }
+        if (type.isEmpty()) throw error(peek(), "ARC-E1029", "型名が必要です");
+        return type.toString();
     }
 
     private void skipAnnotation() {

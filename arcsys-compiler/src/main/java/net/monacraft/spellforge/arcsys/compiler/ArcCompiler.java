@@ -4,6 +4,7 @@ import net.monacraft.spellforge.arcsys.compiler.ArcBytecode.*;
 import net.monacraft.spellforge.arcsys.language.ArcAst.*;
 import net.monacraft.spellforge.arcsys.language.ArcParser;
 import net.monacraft.spellforge.arcsys.language.ArcTypeChecker;
+import net.monacraft.spellforge.arcsys.language.ArcMagicApiCatalog;
 import net.monacraft.spellforge.arcsys.language.SourceModel.Diagnostic;
 import net.monacraft.spellforge.arcsys.language.SourceModel.Severity;
 import net.monacraft.spellforge.arcsys.language.Token.Type;
@@ -15,7 +16,9 @@ import static net.monacraft.spellforge.arcsys.compiler.ArcBytecode.Op.*;
 /** Deterministic source-to-ArcVM compiler with a closed host API allowlist. */
 public final class ArcCompiler {
     public static final int MAX_INSTRUCTIONS = 4_096;
-    private static final Map<String, ApiDefinition> APIS = apiDefinitions();
+    private static final Map<String, ApiDefinition> APIS = ArcMagicApiCatalog.all().entrySet().stream()
+            .collect(java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> new ApiDefinition(
+                    entry.getValue().capability(), entry.getValue().minArgs(), entry.getValue().maxArgs(), entry.getValue().fuel())));
 
     public CompileResult compile(String source) {
         var parsed = ArcParser.parse(source);
@@ -461,47 +464,7 @@ public final class ArcCompiler {
         private record PendingBranch(String name, Stmt statement) { }
     }
 
-    private static Map<String, ApiDefinition> apiDefinitions() {
-        Map<String, ApiDefinition> apis = new TreeMap<>();
-        apis.put("mobs.hostile", new ApiDefinition("sense.hostile", 0, 2, 8));
-        apis.put("entities.hostile", new ApiDefinition("sense.hostile", 0, 3, 8));
-        apis.put("spell.cast", new ApiDefinition("spell.cast", 1, 2, 16));
-        apis.put("spell.effect", new ApiDefinition("spell.effect", 2, 4, 12));
-        apis.put("world.particle", new ApiDefinition("visual.particle", 2, 4, 8));
-        apis.put("particles.spiral", new ApiDefinition("visual.particle", 1, 4, 10));
-        apis.put("particles.ring", new ApiDefinition("visual.particle", 1, 4, 8));
-        apis.put("particles.sphere", new ApiDefinition("visual.particle", 1, 4, 12));
-        apis.put("display.magic_circle", new ApiDefinition("visual.display", 1, 5, 20));
-        apis.put("display.item", new ApiDefinition("visual.display", 2, 4, 12));
-        apis.put("display.text", new ApiDefinition("visual.display", 2, 4, 12));
-        apis.put("virtual_structure.show", new ApiDefinition("visual.structure", 2, 4, 24));
-        apis.put("math.clamp", new ApiDefinition("math", 3, 3, 2));
-        apis.put("target.nearest", new ApiDefinition("sense.target", 0, 1, 6));
-        apis.put("combat.can_attack", new ApiDefinition("combat.inspect", 1, 1, 3));
-        apis.put("combat.damage", new ApiDefinition("combat.damage", 2, 3, 16));
-        apis.put("combat.apply", new ApiDefinition("combat.effect", 3, 4, 12));
-        apis.put("entity.distance", new ApiDefinition("sense.distance", 2, 2, 2));
-        apis.put("raycast.entities", new ApiDefinition("sense.raycast", 1, 4, 12));
-        apis.put("raycast.blocks", new ApiDefinition("sense.raycast", 1, 4, 12));
-        apis.put("blocks.query", new ApiDefinition("sense.block", 1, 3, 8));
-        apis.put("items.inspect", new ApiDefinition("sense.item", 1, 1, 4));
-        apis.put("mana.current", new ApiDefinition("mana.read", 0, 0, 1));
-        apis.put("mana.consume", new ApiDefinition("mana.consume", 1, 1, 4));
-        apis.put("pdc.get", new ApiDefinition("storage.read", 1, 2, 3));
-        apis.put("pdc.set", new ApiDefinition("storage.write", 2, 3, 5));
-        apis.put("time.after", new ApiDefinition("time.schedule", 2, 2, 4));
-        apis.put("event.cancel", new ApiDefinition("event.cancel", 0, 0, 2));
-        apis.put("skript.emit", new ApiDefinition("operator.skript.bridge", 1, 2, 8));
-        apis.put("random.chance", new ApiDefinition("random", 1, 1, 2));
-        apis.put("time.wait", new ApiDefinition("time.schedule", 1, 1, 4));
-        apis.put("event.emit", new ApiDefinition("event.emit", 1, 1, 4));
-        apis.put("state.get", new ApiDefinition("state.read", 2, 4, 2));
-        apis.put("state.set", new ApiDefinition("state.write", 2, 4, 3));
-        return Collections.unmodifiableMap(apis);
-    }
-
-    private static final Set<String> RESULT_APIS = Set.of(
-            "spell.cast", "spell.effect", "combat.damage", "combat.apply", "mana.consume",
-            "pdc.set", "time.after", "event.cancel", "skript.emit", "time.wait", "event.emit", "state.set"
-    );
+    private static final Set<String> RESULT_APIS = ArcMagicApiCatalog.all().values().stream()
+            .filter(api -> api.returns().kind() == ArcMagicApiCatalog.Kind.RESULT).map(ArcMagicApiCatalog.Api::name)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
 }
