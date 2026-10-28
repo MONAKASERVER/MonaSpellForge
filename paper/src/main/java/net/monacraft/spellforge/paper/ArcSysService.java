@@ -15,9 +15,12 @@ final class ArcSysService {
     private final SpellDatabase database;
     private final FragmentService fragments;
     private final ArcCompiler compiler = new ArcCompiler();
+    private final ArcCoreService cores;
     private final Map<UUID, DebugSession> debugSessions = new HashMap<>();
 
-    ArcSysService(SpellDatabase database, FragmentService fragments) { this.database = database; this.fragments = fragments; }
+    ArcSysService(SpellDatabase database, FragmentService fragments, ArcCoreService cores) {
+        this.database = database; this.fragments = fragments; this.cores = cores;
+    }
 
     JsonObject handle(Player player, String type, JsonObject payload) {
         return switch (type) {
@@ -33,6 +36,12 @@ final class ArcSysService {
             case "nodeGraph" -> graph(payload);
             case "logs" -> logs(player);
             case "studioSnapshot" -> studio(player);
+            case "listCores" -> listCores(player);
+            case "inspectCore" -> inspectCore(player, payload);
+            case "bindCore" -> bindCore(player, payload);
+            case "unbindCore" -> unbindCore(player, payload);
+            case "validateCoreBinding" -> validateCore(player, payload);
+            case "simulateCore" -> simulateCore(player, payload);
             default -> throw new ArcRequestException("UNKNOWN_REQUEST", "未知のArcSys要求です");
         };
     }
@@ -238,7 +247,71 @@ final class ArcSysService {
         result.add("fragments", fragmentList);
         JsonArray apis = new JsonArray();
         ArcCompiler.availableApis().forEach((name, def) -> { JsonObject item = new JsonObject(); item.addProperty("name", name); item.addProperty("mana", def.fuel()); item.addProperty("capability", def.capability()); apis.add(item); });
-        result.add("apis", apis); result.add("deployHistory", logs(player).get("history")); return result;
+        result.add("apis", apis); result.add("deployHistory", logs(player).get("history"));
+        result.add("cores", listCores(player).get("cores")); return result;
+    }
+
+    private JsonObject listCores(Player player) {
+        JsonArray values = new JsonArray();
+        for (ArcCoreService.CoreView view : cores.list(player.getUniqueId())) values.add(coreJson(view));
+        JsonObject result = new JsonObject(); result.add("cores", values); result.addProperty("enabled", cores.enabled()); return result;
+    }
+
+    private JsonObject inspectCore(Player player, JsonObject payload) {
+        ArcCoreService.CoreView view = cores.inspect(player.getUniqueId(), uuid(payload, "circuitId"), uuid(payload, "nodeId"))
+                .orElseThrow(() -> new ArcRequestException("CORE_NOT_FOUND", "術式演算核が見つかりません"));
+        return coreJson(view);
+    }
+
+    private JsonObject bindCore(Player player, JsonObject payload) {
+        ArcCoreService.BindingMode mode;
+        try { mode = ArcCoreService.BindingMode.valueOf(payload.has("mode") ? payload.get("mode").getAsString().toUpperCase(Locale.ROOT) : "PINNED"); }
+        catch (IllegalArgumentException error) { throw new ArcRequestException("BINDING_MODE", "PINNEDまたはLATESTを指定してください"); }
+        Long revision = payload.has("revision") && !payload.get("revision").isJsonNull() ? payload.get("revision").getAsLong() : null;
+        ArcCoreService.Operation operation = cores.bind(player, uuid(payload, "circuitId"), uuid(payload, "nodeId"),
+                uuid(payload, "spellId"), revision, mode);
+        if (!operation.ok()) throw new ArcRequestException(operation.code(), operation.message());
+        return inspectCore(player, payload);
+    }
+
+    private JsonObject unbindCore(Player player, JsonObject payload) {
+        ArcCoreService.Operation operation = cores.unbind(player, uuid(payload, "circuitId"), uuid(payload, "nodeId"));
+        if (!operation.ok()) throw new ArcRequestException(operation.code(), operation.message());
+        JsonObject result = new JsonObject(); result.addProperty("status", "UNBOUND"); return result;
+    }
+
+    private JsonObject validateCore(Player player, JsonObject payload) {
+        JsonObject result = inspectCore(player, payload);
+        result.addProperty("valid", "READY".equals(result.get("status").getAsString())); return result;
+    }
+
+    private JsonObject simulateCore(Player player, JsonObject payload) {
+        inspectCore(player, payload);
+        UUID circuitId = uuid(payload, "circuitId"), nodeId = uuid(payload, "nodeId");
+        SpellDatabase.ArcCoreBinding binding = database.arcCoreBinding(circuitId, nodeId)
+                .filter(value -> value.ownerId().equals(player.getUniqueId()))
+                .orElseThrow(() -> new ArcRequestException("CORE_UNBOUND", "術式演算核にプログラムが紐付いていません"));
+        SpellDatabase.ArcSpellRevision revision = binding.mode().equals("LATEST")
+                ? database.arcSpell(binding.spellId(), player.getUniqueId()).orElse(null)
+                : database.arcSpell(binding.spellId(), player.getUniqueId(), binding.pinnedRevision()).orElse(null);
+        if (revision == null) throw new ArcRequestException("REVISION_CONFLICT", "実行対象Revisionが見つかりません");
+        JsonObject request = new JsonObject(); request.addProperty("source", revision.source());
+        JsonObject result = simulate(player, request); result.addProperty("revision", revision.revision()); return result;
+    }
+
+    private static JsonObject coreJson(ArcCoreService.CoreView view) {
+        JsonObject item = new JsonObject(); var binding = view.binding();
+        item.addProperty("bindingId", binding.bindingId().toString()); item.addProperty("circuitId", binding.circuitId().toString());
+        item.addProperty("nodeId", binding.nodeId().toString()); item.addProperty("fragmentInstanceId", binding.fragmentInstanceId().toString());
+        item.addProperty("spellId", binding.spellId().toString()); item.addProperty("program", view.spellName());
+        item.addProperty("circuit", view.circuitName()); item.addProperty("revision", view.resolvedRevision());
+        item.addProperty("mode", binding.mode()); item.addProperty("level", view.level()); item.addProperty("status", view.status());
+        return item;
+    }
+
+    private static UUID uuid(JsonObject payload, String name) {
+        try { return UUID.fromString(payload.get(name).getAsString()); }
+        catch (Exception error) { throw new ArcRequestException("INVALID_UUID", name + "が不正です"); }
     }
 
     private JsonObject diagnostics(ArcCompiler.CompileResult compiled) {

@@ -68,8 +68,8 @@ final class ArcSysDeveloperBridge extends WebSocketServer {
     static boolean forward(SpellForgeProtocol.Frame frame) {
         if (frame.type() != SpellForgeProtocol.Type.ARC_RESPONSE) return false;
         WebSocket socket = PENDING.remove(frame.requestId());
-        if (socket != null && socket.isOpen()) socket.send(frame.payload());
-        return true;
+        if (socket != null && socket.isOpen()) { socket.send(frame.payload()); return true; }
+        return false;
     }
 
     @Override public void onOpen(WebSocket connection, ClientHandshake handshake) {
@@ -121,7 +121,8 @@ final class ArcSysDeveloperBridge extends WebSocketServer {
     private boolean allowedType(String type) {
         return switch (type) {
             case "listSpells", "openSpell", "compile", "validate", "deploy", "simulate",
-                 "nodeGraph", "debugStart", "debugContinue", "debugState", "debugStop", "logs", "studioSnapshot" -> true;
+                 "nodeGraph", "debugStart", "debugContinue", "debugState", "debugStop", "logs", "studioSnapshot",
+                 "listCores", "inspectCore", "bindCore", "unbindCore", "validateCoreBinding", "simulateCore" -> true;
             default -> false;
         };
     }

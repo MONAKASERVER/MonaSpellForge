@@ -33,7 +33,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Signed, owner-bound, five-use container for a snapshot of one saved spell. */
+/** Signed, transferable, five-use bearer container for a snapshot of one saved spell. */
 final class NeutralMagicStoneService implements Listener {
     private static final int SCHEMA = 1;
     private static final int MAX_USES = 5;
@@ -230,7 +230,6 @@ final class NeutralMagicStoneService implements Listener {
         try {
             UUID instance = UUID.fromString(instanceRaw);
             UUID owner = UUID.fromString(ownerRaw);
-            if (expectedOwner != null && !owner.equals(expectedOwner.getUniqueId())) return new Validation(true, false, "OWNER", null);
             String signedCircuit = Objects.requireNonNullElse(circuitRaw, "");
             long signedRevision = Objects.requireNonNullElse(revision, 0L);
             boolean signed = integrity.verifyPayload(signature, "neutral-stone-v1", SCHEMA, instance, owner,
@@ -255,6 +254,16 @@ final class NeutralMagicStoneService implements Listener {
             long expectedRevision = record.circuit() == null ? 0L : record.circuit().revision();
             if (!Objects.equals(Objects.requireNonNullElse(circuitRaw, ""), expectedCircuit)
                     || Objects.requireNonNullElse(revision, 0L) != expectedRevision) return new Validation(true, false, "CIRCUIT", record);
+            if (expectedOwner != null && !record.ownerId().equals(expectedOwner.getUniqueId())) {
+                if (!database.transferNeutralStone(instance, record.ownerId(), expectedOwner.getUniqueId(), uses)) {
+                    return new Validation(true, false, "TRANSFER_CONFLICT", record);
+                }
+                record = database.neutralStone(instance).orElse(null);
+                if (record == null || !record.ownerId().equals(expectedOwner.getUniqueId())) {
+                    return new Validation(true, false, "TRANSFER_FAILED", record);
+                }
+                applyAppearance(item, record);
+            }
             return new Validation(true, true, "OK", record);
         } catch (RuntimeException error) { return new Validation(true, false, "MALFORMED", null); }
     }

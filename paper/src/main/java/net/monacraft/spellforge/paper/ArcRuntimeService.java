@@ -39,6 +39,8 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
     private final int maxPotionTicks;
     private final int maxDisplayTicks;
     private final Set<String> skriptSignals;
+    private final int maxEffectsPerTick;
+    private int effectsAppliedThisTick;
     private long tick;
     private final Map<UUID, Integer> inboundSignalsThisTick = new HashMap<>();
 
@@ -54,6 +56,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
         this.maxDisplayTicks = plugin.getConfig().getInt("arc-runtime.max-display-duration-ticks", 200);
         this.skriptSignals = plugin.getConfig().getStringList("arc-runtime.skript-allowlist").stream()
                 .map(value -> value.toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toUnmodifiableSet());
+        this.maxEffectsPerTick = Math.max(1, plugin.getConfig().getInt("arcsys.core.max-effects-per-tick", 64));
     }
 
     CastOutcome cast(Player player, UUID spellId) {
@@ -67,7 +70,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
         if (!compiled.program().entryPoints().containsKey("on:cast")) return new CastOutcome(false, "NO_CAST_HANDLER", "on castがありません", null);
 
         RuntimeHost host = new RuntimeHost(player, spellId, compiled.program().capabilities());
-        RuntimeListener listener = new RuntimeListener(player, host);
+        RuntimeListener listener = new RuntimeListener(player, host, false, true, null);
         try {
             ArcScheduler.TaskId id = scheduler.start(compiled.program(), "on:cast",
                     Map.of("caster", entityRef(player)), ArcVm.Limits.production(), host, tick, listener);
@@ -80,7 +83,28 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
         }
     }
 
-    void tick() { tick++; inboundSignalsThisTick.clear(); scheduler.tick(tick); }
+    CoreCastOutcome castCore(Player player, SpellDatabase.ArcSpellRevision revision, int fuel, int maxEffects,
+                             Map<String, Object> inputs, boolean applyProductionEffects, CoreCompletion completion) {
+        var compiled = compiler.compile(revision.source());
+        if (!compiled.valid()) return new CoreCastOutcome(false, "COMPILE_ERROR", "保存済み術式を再コンパイルできません", null);
+        String requirementFailure = requirementFailure(player, compiled.program().requirements());
+        if (requirementFailure != null) return new CoreCastOutcome(false, "REQUIREMENT", requirementFailure, null);
+        if (!compiled.program().entryPoints().containsKey("on:cast"))
+            return new CoreCastOutcome(false, "NO_CAST_HANDLER", "on castがありません", null);
+        RuntimeHost host = new RuntimeHost(player, revision.spellId(), compiled.program().capabilities());
+        RuntimeListener listener = new RuntimeListener(player, host, true, applyProductionEffects, completion);
+        try {
+            ArcScheduler.TaskId id = scheduler.start(compiled.program(), "on:cast", inputs,
+                    new ArcVm.Limits(fuel, maxEffects), host, tick, listener);
+            owners.put(id, player.getUniqueId());
+            if (!scheduler.isActive(id)) owners.remove(id);
+            return new CoreCastOutcome(true, scheduler.isActive(id) ? "RUNNING" : "SUCCESS", "術式演算核を起動しました", id);
+        } catch (RuntimeException error) {
+            return new CoreCastOutcome(false, "RUNTIME_START", "術式演算核を開始できません", null);
+        }
+    }
+
+    void tick() { tick++; inboundSignalsThisTick.clear(); effectsAppliedThisTick = 0; scheduler.tick(tick); }
     int activeTasks() { return scheduler.activeTasks(); }
 
     int cancel(UUID owner, String reason) {
@@ -105,7 +129,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
             if (!compiled.valid() || !compiled.program().entryPoints().containsKey("on:signal")) continue;
             if (requirementFailure(player, compiled.program().requirements()) != null) continue;
             RuntimeHost host = new RuntimeHost(player, revision.spellId(), compiled.program().capabilities());
-            RuntimeListener listener = new RuntimeListener(player, host);
+            RuntimeListener listener = new RuntimeListener(player, host, false, true, null);
             try {
                 ArcScheduler.TaskId id = scheduler.start(compiled.program(), "on:signal", Map.of(
                         "caster", entityRef(player), "signal", signal.toLowerCase(Locale.ROOT), "payload", safePayload),
@@ -145,32 +169,61 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
     }
 
     private final class RuntimeListener implements ArcScheduler.Listener {
-        private final Player player; private final RuntimeHost host; private int applied;
-        private RuntimeListener(Player player, RuntimeHost host) { this.player = player; this.host = host; }
-        public void suspended(ArcScheduler.TaskId id, ArcVm.Result result) { applyNew(result); }
+        private final Player player; private final RuntimeHost host; private final boolean atomic;
+        private final boolean applyProductionEffects; private final CoreCompletion completion; private int applied;
+        private String rejectionCode = "EFFECT_REJECTED";
+        private RuntimeListener(Player player, RuntimeHost host, boolean atomic, boolean applyProductionEffects,
+                                CoreCompletion completion) {
+            this.player = player; this.host = host; this.atomic = atomic;
+            this.applyProductionEffects = applyProductionEffects; this.completion = completion;
+        }
+        public void suspended(ArcScheduler.TaskId id, ArcVm.Result result) { if (!atomic) applyNew(result); }
         public void completed(ArcScheduler.TaskId id, ArcVm.Result result) {
-            applyNew(result); owners.remove(id);
+            if (atomic && result.value() instanceof ArcBytecode.Variant variant && variant.tag().equals("Err")) {
+                owners.remove(id);
+                if (completion != null) completion.complete(false, "PROGRAM_RESULT_ERR", null);
+                return;
+            }
+            boolean accepted = applyNew(result); owners.remove(id);
+            if (completion != null) completion.complete(accepted, accepted ? "SUCCESS" : rejectionCode,
+                    accepted ? result.value() : null);
         }
         public void trapped(ArcScheduler.TaskId id, ArcVm.Result result) {
             owners.remove(id);
             if (player.isOnline()) player.sendMessage(Component.text("ArcSys停止: " + result.code(), NamedTextColor.RED));
+            if (completion != null) completion.complete(false, result.code(), null);
         }
-        public void cancelled(ArcScheduler.TaskId id, String reason) { owners.remove(id); }
-        private void applyNew(ArcVm.Result result) {
+        public void cancelled(ArcScheduler.TaskId id, String reason) {
+            owners.remove(id); if (completion != null) completion.complete(false, "CANCELLED:" + reason, null);
+        }
+        private boolean applyNew(ArcVm.Result result) {
             List<ArcVm.EffectRequest> effects = result.effects();
             List<ArcVm.EffectRequest> segment = effects.subList(applied, effects.size());
+            if (effectsAppliedThisTick + segment.size() > maxEffectsPerTick) {
+                host.revoked = true; applied = effects.size();
+                rejectionCode = "TICK_EFFECT_BUDGET"; return false;
+            }
             ArcEffectContract.Decision decision = effectContract.validate(segment, host.capabilities);
             if (!decision.allowed()) {
                 host.revoked = true;
                 if (player.isOnline()) player.sendMessage(Component.text("ArcSys契約違反: " + decision.code(), NamedTextColor.RED));
                 applied = effects.size();
-                return;
+                rejectionCode = decision.code(); return false;
             }
-            for (int i = applied; i < effects.size(); i++) {
+            String hostRejection = validateEffects(player, segment);
+            if (hostRejection != null) {
+                rejectionCode = hostRejection; host.revoked = true; applied = effects.size(); return false;
+            }
+            for (int i = applied; applyProductionEffects && i < effects.size(); i++) {
                 try { applyEffect(player, host, effects.get(i)); }
-                catch (RuntimeException error) { plugin.getLogger().warning("ArcSys effect rejected: " + effects.get(i).type()); }
+                catch (RuntimeException error) {
+                    plugin.getLogger().warning("ArcSys effect rejected: " + effects.get(i).type());
+                    if (atomic) { rejectionCode = "EFFECT_REJECTED"; host.revoked = true; applied = effects.size(); return false; }
+                }
             }
+            if (applyProductionEffects) effectsAppliedThisTick += segment.size();
             applied = effects.size();
+            return true;
         }
     }
 
@@ -296,7 +349,10 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
 
     private void applyEffect(Player player, RuntimeHost host, ArcVm.EffectRequest effect) {
         switch (effect.type()) {
-            case "mana.consume" -> mana.consume(player, ((Number) effect.parameters().get("amount")).doubleValue());
+            case "mana.consume" -> {
+                if (!mana.consume(player, ((Number) effect.parameters().get("amount")).doubleValue()))
+                    throw new IllegalStateException("mana changed before commit");
+            }
             case "state.set" -> {
                 String name = String.valueOf(effect.parameters().get("name")); String scope = String.valueOf(effect.parameters().get("scope"));
                 long ttl = ((Number) effect.parameters().get("ttl")).longValue(); Object value = effect.parameters().get("value");
@@ -320,7 +376,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
 
     private void applyDamage(Player source, List<Object> args) {
         if (args.size() < 2) return; LivingEntity target = living(args.getFirst());
-        if (target == null || target == source || target.getWorld() != source.getWorld()
+        if (!protections.canAffect(source, target)
                 || target.getLocation().distanceSquared(source.getLocation()) > maxRange * maxRange) return;
         double amount = number(args.get(1), 0, maxDamage); if (amount > 0) target.damage(amount, source);
     }
@@ -333,6 +389,35 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
         int duration = (int) Math.min(maxPotionTicks, Math.max(1, ((Number) args.get(2)).longValue()));
         int amplifier = args.size() > 3 ? (int) Math.min(4, Math.max(0, ((Number) args.get(3)).longValue())) : 0;
         target.addPotionEffect(new PotionEffect(type, duration, amplifier, false, true, true));
+    }
+
+    private String validateEffects(Player player, List<ArcVm.EffectRequest> effects) {
+        double requestedMana = 0;
+        for (ArcVm.EffectRequest effect : effects) {
+            List<Object> args = arguments(effect);
+            try {
+                switch (effect.type()) {
+                    case "mana.consume" -> requestedMana += number(effect.parameters().get("amount"), 0, mana.capacity(player));
+                    case "combat.damage", "combat.apply" -> {
+                        LivingEntity target = args.isEmpty() ? null : living(effect.type().equals("combat.damage") ? args.getFirst() : args.size() > 1 ? args.get(1) : null);
+                        if (!protections.canAffect(player, target) || target.getLocation().distanceSquared(player.getLocation()) > maxRange * maxRange)
+                            return "PROTECTED_TARGET";
+                    }
+                    case "display.magic_circle", "display.item", "display.text" -> {
+                        if (!protections.canBuild(player, displayLocation(player, args))) return "PROTECTED_LOCATION";
+                    }
+                    case "pdc.set" -> {
+                        if (args.size() < 2 || pdcKey(String.valueOf(args.getFirst())) == null || String.valueOf(args.get(1)).length() > 512)
+                            return "PDC_REJECTED";
+                    }
+                    case "skript.emit" -> {
+                        if (args.isEmpty() || !skriptSignals.contains(String.valueOf(args.getFirst()).toLowerCase(Locale.ROOT))) return "SKRIPT_DENIED";
+                    }
+                    default -> { }
+                }
+            } catch (RuntimeException error) { return "INVALID_EFFECT_ARGUMENT"; }
+        }
+        return mana.current(player) + 1e-6 < requestedMana ? "MANA_CHANGED" : null;
     }
 
     private void applyParticle(Player player, List<Object> args) {
@@ -454,5 +539,7 @@ final class ArcRuntimeService implements Listener, AutoCloseable, ArcSkriptBridg
     }
 
     record CastOutcome(boolean accepted, String code, String message, ArcScheduler.TaskId taskId) { }
+    record CoreCastOutcome(boolean accepted, String code, String message, ArcScheduler.TaskId taskId) { }
+    @FunctionalInterface interface CoreCompletion { void complete(boolean success, String code, Object value); }
     private record StateKey(UUID ownerId, UUID spellId, String name, String scope) { }
 }

@@ -52,6 +52,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   register('arcsys.openGraph', () => sourceRequest('nodeGraph'));
   register('arcsys.logs', async () => { const result = await requireBridge().request('logs', {}); output.appendLine(JSON.stringify(result, null, 2)); output.show(true); });
+  register('arcsys.listCores', async () => showCoreResult('list', await requireBridge().request('listCores', {})));
+  register('arcsys.inspectCore', async () => {
+    const core = await pickCore(); if (!core) return;
+    showCoreResult('inspect', await requireBridge().request('inspectCore', { circuitId: core.circuitId, nodeId: core.nodeId }));
+  });
+  register('arcsys.validateCoreBinding', async () => {
+    const core = await pickCore(); if (!core) return;
+    showCoreResult('validate', await requireBridge().request('validateCoreBinding', { circuitId: core.circuitId, nodeId: core.nodeId }));
+  });
+  register('arcsys.unbindCore', async () => {
+    const core = await pickCore(); if (!core) return;
+    await requireBridge().request('unbindCore', { circuitId: core.circuitId, nodeId: core.nodeId });
+    vscode.window.showInformationMessage('ARCSYS_COREの紐付けを解除しました'); await refreshStudio(studio);
+  });
+  register('arcsys.bindCore', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'arcsys') throw new Error('紐付けるArcSys (.arc) ファイルを開いてください');
+    const metadata = spellMetadata.get(editor.document.uri.toString());
+    if (!metadata) throw new Error('先にArcSys: Deploy Spell to Minecraftを実行してください');
+    const result = await requireBridge().request('listCores', {}) as { cores?: CoreInfo[] };
+    const core = await vscode.window.showQuickPick((result.cores ?? []).map(value => ({
+      label: `${value.circuit} / ARCSYS_CORE Lv.${value.level}`, description: value.nodeId, value
+    })), { title: '紐付ける術式演算核' });
+    if (!core) return;
+    const mode = await vscode.window.showQuickPick(['PINNED', 'LATEST'] as const, { title: 'Revision方式' });
+    if (!mode) return;
+    const bound = await requireBridge().request('bindCore', { circuitId: core.value.circuitId, nodeId: core.value.nodeId,
+      spellId: metadata.spellId, revision: metadata.revision, mode });
+    showCoreResult('bind', bound); await refreshStudio(studio);
+  });
   register('arcsys.openSpell', async () => {
     const result = await requireBridge().request('listSpells', {}) as { spells?: Array<{ id: string; name: string }> };
     const selected = await vscode.window.showQuickPick((result.spells ?? []).map(s => ({ label: s.name, id: s.id })), { title: 'Minecraftから開く魔術' });
@@ -83,6 +113,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     showDebugResult(mode, result);
     if (result.status === 'COMPLETED' || result.status === 'TRAPPED' || result.status === 'STOPPED') debugSessionId = undefined;
   }
+
+  async function pickCore(): Promise<CoreInfo | undefined> {
+    const result = await requireBridge().request('listCores', {}) as { cores?: CoreInfo[] };
+    const selected = await vscode.window.showQuickPick((result.cores ?? []).map(value => ({
+      label: `${value.circuit} / ${value.program}`, description: `${value.status} · ${value.nodeId}`, value
+    })), { title: '術式演算核を選択' });
+    return selected?.value;
+  }
+}
+
+interface CoreInfo { circuitId: string; nodeId: string; circuit: string; program: string; level: number; status: string }
+function showCoreResult(action: string, result: unknown): void {
+  output.appendLine(`[${new Date().toISOString()}] core:${action}\n${JSON.stringify(result, null, 2)}`); output.show(true);
 }
 
 function requireBridge(): FabricBridge { if (!bridge?.connected) throw new Error('先に ArcSys: Connect to Minecraft を実行してください'); return bridge; }

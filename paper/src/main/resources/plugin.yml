@@ -25,3 +25,6 @@ permissions:
   monaspellforge.arcsys.deploy: {default: true}
   monaspellforge.arcsys.operator: {default: op}
   monaspellforge.arcsys.signal: {default: op}
+  monaspellforge.arcsys.core.use: {default: true}
+  monaspellforge.arcsys.core.bind: {default: true}
+  monaspellforge.arcsys.core.admin: {default: op}

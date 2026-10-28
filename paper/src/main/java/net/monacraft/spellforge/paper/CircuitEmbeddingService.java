@@ -29,9 +29,24 @@ final class CircuitEmbeddingService {
     }
 
     CircuitService.SaveResult save(Player player, Circuit circuit, long expectedRevision) {
+        return saveInternal(player, circuit, expectedRevision, false);
+    }
+
+    CircuitService.SaveResult stow(Player player, Circuit circuit, long expectedRevision, UUID nodeId) {
+        Circuit previous = circuits.getCircuit(circuit.circuitId()).orElse(null);
+        if (previous == null || !previous.ownerId().equals(player.getUniqueId())) return failure("OWNER_MISMATCH", circuit);
+        boolean existed = previous.nodes().stream().anyMatch(node -> node.nodeId().equals(nodeId));
+        boolean removed = circuit.nodes().stream().noneMatch(node -> node.nodeId().equals(nodeId));
+        if (!existed || !removed || circuit.nodes().size() > 25 || circuit.edges().size() > 64) {
+            return failure("INVALID_STOW", circuit);
+        }
+        return saveInternal(player, circuit, expectedRevision, true);
+    }
+
+    private CircuitService.SaveResult saveInternal(Player player, Circuit circuit, long expectedRevision, boolean allowDraft) {
         if (!circuit.ownerId().equals(player.getUniqueId())) return failure("OWNER_MISMATCH", circuit);
         var validation = circuits.validate(circuit);
-        if (!validation.valid()) return failure("VALIDATION_FAILED", circuit);
+        if (!allowDraft && !validation.valid()) return failure("VALIDATION_FAILED", circuit);
 
         Circuit previous = circuits.getCircuit(circuit.circuitId()).orElse(null);
         if (previous != null && !previous.ownerId().equals(player.getUniqueId())) return failure("OWNER_MISMATCH", circuit);

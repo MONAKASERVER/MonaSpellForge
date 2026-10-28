@@ -30,13 +30,16 @@ final class DefaultSpellService implements SpellService {
     private final CircuitCompiler compiler;
     private final ManaService mana;
     private final TickBudgetManager budgets;
+    private final ArcCoreService arcCores;
     private final SpellParticleRenderer particles;
     private final Map<UUID, Set<UUID>> active = new ConcurrentHashMap<>();
     private final Map<UUID, Set<BukkitTask>> scheduled = new ConcurrentHashMap<>();
     private final Map<String, Double> memory = new ConcurrentHashMap<>();
 
-    DefaultSpellService(Plugin plugin, SpellDatabase database, CircuitCompiler compiler, ManaService mana, TickBudgetManager budgets) {
+    DefaultSpellService(Plugin plugin, SpellDatabase database, CircuitCompiler compiler, ManaService mana,
+                        TickBudgetManager budgets, ArcCoreService arcCores) {
         this.plugin = plugin; this.database = database; this.compiler = compiler; this.mana = mana; this.budgets = budgets;
+        this.arcCores = arcCores;
         this.particles = new SpellParticleRenderer(plugin.getConfig());
     }
 
@@ -53,7 +56,7 @@ final class DefaultSpellService implements SpellService {
     }
 
     CastResult castEmbedded(Player player, Circuit circuit, String trigger) {
-        if (circuit == null || !circuit.ownerId().equals(player.getUniqueId())) {
+        if (circuit == null) {
             return reject("NOT_FOUND", "封入された魔術を使用できません");
         }
         return castCircuit(player, circuit, trigger);
@@ -76,6 +79,26 @@ final class DefaultSpellService implements SpellService {
         database.auditCast(castId, player.getUniqueId(), circuit.circuitId(), "STARTED", spell.manaCost(), spell.runtimeCost(), started, null);
         try {
             RuntimePlan plan = plan(player, spell, circuit.circuitId());
+            if (arcCores != null && arcCores.executeFlow(player, circuit, spell, normalizedTrigger, flow -> {
+                if (!flow.success()) {
+                    mana.refund(player, spell.manaCost()); finish(player.getUniqueId(), castId);
+                    database.auditCast(castId, player.getUniqueId(), circuit.circuitId(), "ARC_CORE_" + flow.code(),
+                            spell.manaCost(), spell.runtimeCost(), started, System.currentTimeMillis());
+                    if (player.isOnline()) player.sendMessage(Component.text("術式演算核が停止しました: " + flow.code(), NamedTextColor.RED));
+                    return;
+                }
+                try {
+                    if (plan.delayTicks > 0 || plan.intervalTicks > 0) schedule(player, spell, circuit.circuitId(), castId, started, plan);
+                    else {
+                        for (int iteration = 0; iteration < plan.iterations; iteration++) execute(player, spell, circuit.circuitId(), plan.powerMultiplier);
+                        finish(player.getUniqueId(), castId);
+                        database.auditCast(castId, player.getUniqueId(), circuit.circuitId(), "SUCCESS", spell.manaCost(), spell.runtimeCost(), started, System.currentTimeMillis());
+                    }
+                } catch (RuntimeException error) {
+                    mana.refund(player, spell.manaCost()); finish(player.getUniqueId(), castId);
+                    database.auditCast(castId, player.getUniqueId(), circuit.circuitId(), "FAILED", spell.manaCost(), spell.runtimeCost(), started, System.currentTimeMillis());
+                }
+            })) return new CastResult(true, "ARC_CORE_RUNNING", "術式演算核を起動しました", castId);
             if (plan.delayTicks > 0 || plan.intervalTicks > 0) {
                 schedule(player, spell, circuit.circuitId(), castId, started, plan);
                 return new CastResult(true, "SCHEDULED", "魔術を起動しました", castId);

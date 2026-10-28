@@ -103,6 +103,24 @@ final class SpellDatabase implements AutoCloseable {
                   PRIMARY KEY(owner_uuid,spell_uuid,state_key,scope)
                 )""");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS arc_state_expiry_idx ON arc_state(expires_at)");
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS arc_core_bindings(
+                  binding_uuid TEXT PRIMARY KEY, owner_uuid TEXT NOT NULL,
+                  circuit_uuid TEXT NOT NULL, node_uuid TEXT NOT NULL,
+                  fragment_instance_uuid TEXT NOT NULL, arc_spell_uuid TEXT NOT NULL,
+                  pinned_revision INTEGER, binding_mode TEXT NOT NULL,
+                  schema_version INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                  UNIQUE(circuit_uuid,node_uuid),
+                  FOREIGN KEY(circuit_uuid) REFERENCES circuits(circuit_uuid) ON DELETE CASCADE,
+                  FOREIGN KEY(arc_spell_uuid) REFERENCES arc_spells(spell_uuid) ON DELETE CASCADE
+                )""");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS arc_core_owner_idx ON arc_core_bindings(owner_uuid,updated_at DESC)");
+            statement.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS arc_core_audit(
+                  operation_uuid TEXT PRIMARY KEY, owner_uuid TEXT NOT NULL, binding_uuid TEXT,
+                  circuit_uuid TEXT NOT NULL, node_uuid TEXT NOT NULL, action TEXT NOT NULL,
+                  result_code TEXT NOT NULL, details TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL
+                )""");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, unixepoch())");
         }
@@ -114,6 +132,7 @@ final class SpellDatabase implements AutoCloseable {
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(4, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(5, unixepoch())");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, unixepoch())");
+            statement.executeUpdate("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(7, unixepoch())");
         }
     }
 
@@ -267,6 +286,7 @@ final class SpellDatabase implements AutoCloseable {
                     upsert.setLong(4, saved.revision()); upsert.setInt(5, saved.schemaVersion()); upsert.setString(6, gson.toJson(saved));
                     upsert.setLong(7, saved.createdAt().toEpochMilli()); upsert.setLong(8, saved.updatedAt().toEpochMilli()); upsert.executeUpdate();
                 }
+                pruneArcCoreBindings(saved);
                 connection.commit(); return saved;
             } catch (RuntimeException | SQLException error) { connection.rollback(); throw error; }
             finally { connection.setAutoCommit(true); }
@@ -347,6 +367,7 @@ final class SpellDatabase implements AutoCloseable {
                     upsert.setLong(4, saved.revision()); upsert.setInt(5, saved.schemaVersion()); upsert.setString(6, gson.toJson(saved));
                     upsert.setLong(7, saved.createdAt().toEpochMilli()); upsert.setLong(8, saved.updatedAt().toEpochMilli()); upsert.executeUpdate();
                 }
+                pruneArcCoreBindings(saved);
                 connection.commit();
                 return saved;
             } catch (RuntimeException | SQLException error) {
@@ -562,6 +583,20 @@ final class SpellDatabase implements AutoCloseable {
         } catch (SQLException error) { throw new IllegalStateException("Could not bind neutral stone", error); }
     }
 
+    synchronized boolean transferNeutralStone(UUID instanceId, UUID previousOwner, UUID newOwner, int expectedUses) {
+        if (previousOwner.equals(newOwner) || expectedUses < 1) return previousOwner.equals(newOwner);
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE neutral_stones SET owner_uuid=?,updated_at=?
+                WHERE instance_uuid=? AND owner_uuid=? AND uses_remaining=?""")) {
+            statement.setString(1, newOwner.toString());
+            statement.setLong(2, System.currentTimeMillis());
+            statement.setString(3, instanceId.toString());
+            statement.setString(4, previousOwner.toString());
+            statement.setInt(5, expectedUses);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException error) { throw new IllegalStateException("Could not transfer neutral stone", error); }
+    }
+
     synchronized boolean consumeNeutralStone(UUID instanceId, UUID ownerId, int expectedUses) {
         if (expectedUses < 1) return false;
         try (PreparedStatement statement = connection.prepareStatement("""
@@ -620,6 +655,117 @@ final class SpellDatabase implements AutoCloseable {
                         row.getString(4), row.getString(5), row.getString(6), row.getString(7), row.getLong(8)));
             }
         } catch (SQLException error) { throw new IllegalStateException("Could not open ArcSys spell", error); }
+    }
+
+    synchronized Optional<ArcSpellRevision> arcSpell(UUID spellId, UUID ownerId, long revision) {
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT s.name,r.revision,s.enabled,r.source,r.source_hash,r.capabilities,r.requirements,r.created_at
+                FROM arc_spells s JOIN arc_revisions r ON r.spell_uuid=s.spell_uuid
+                WHERE s.spell_uuid=? AND s.owner_uuid=? AND r.revision=?""")) {
+            ps.setString(1, spellId.toString()); ps.setString(2, ownerId.toString()); ps.setLong(3, revision);
+            try (ResultSet row = ps.executeQuery()) {
+                if (!row.next()) return Optional.empty();
+                return Optional.of(new ArcSpellRevision(spellId, row.getString(1), row.getLong(2), row.getInt(3) != 0,
+                        row.getString(4), row.getString(5), row.getString(6), row.getString(7), row.getLong(8)));
+            }
+        } catch (SQLException error) { throw new IllegalStateException("Could not open ArcSys revision", error); }
+    }
+
+    synchronized ArcCoreBinding saveArcCoreBinding(ArcCoreBinding requested) {
+        long now = System.currentTimeMillis();
+        ArcCoreBinding binding = requested.bindingId() == null
+                ? new ArcCoreBinding(UUID.randomUUID(), requested.ownerId(), requested.circuitId(), requested.nodeId(),
+                requested.fragmentInstanceId(), requested.spellId(), requested.pinnedRevision(), requested.mode(), 1, now, now)
+                : new ArcCoreBinding(requested.bindingId(), requested.ownerId(), requested.circuitId(), requested.nodeId(),
+                requested.fragmentInstanceId(), requested.spellId(), requested.pinnedRevision(), requested.mode(),
+                Math.max(1, requested.schemaVersion()), requested.createdAt() <= 0 ? now : requested.createdAt(), now);
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO arc_core_bindings(binding_uuid,owner_uuid,circuit_uuid,node_uuid,fragment_instance_uuid,
+                  arc_spell_uuid,pinned_revision,binding_mode,schema_version,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(circuit_uuid,node_uuid) DO UPDATE SET
+                  binding_uuid=excluded.binding_uuid,owner_uuid=excluded.owner_uuid,
+                  fragment_instance_uuid=excluded.fragment_instance_uuid,arc_spell_uuid=excluded.arc_spell_uuid,
+                  pinned_revision=excluded.pinned_revision,binding_mode=excluded.binding_mode,
+                  schema_version=excluded.schema_version,updated_at=excluded.updated_at""")) {
+            statement.setString(1, binding.bindingId().toString()); statement.setString(2, binding.ownerId().toString());
+            statement.setString(3, binding.circuitId().toString()); statement.setString(4, binding.nodeId().toString());
+            statement.setString(5, binding.fragmentInstanceId().toString()); statement.setString(6, binding.spellId().toString());
+            if (binding.pinnedRevision() == null) statement.setNull(7, Types.BIGINT); else statement.setLong(7, binding.pinnedRevision());
+            statement.setString(8, binding.mode()); statement.setInt(9, binding.schemaVersion());
+            statement.setLong(10, binding.createdAt()); statement.setLong(11, binding.updatedAt()); statement.executeUpdate();
+            auditArcCore(binding.ownerId(), binding.bindingId(), binding.circuitId(), binding.nodeId(), "BIND", "OK", "");
+            return binding;
+        } catch (SQLException error) { throw new IllegalStateException("Could not save ArcSys core binding", error); }
+    }
+
+    synchronized Optional<ArcCoreBinding> arcCoreBinding(UUID circuitId, UUID nodeId) {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT binding_uuid,owner_uuid,fragment_instance_uuid,arc_spell_uuid,pinned_revision,binding_mode,
+                       schema_version,created_at,updated_at FROM arc_core_bindings WHERE circuit_uuid=? AND node_uuid=?""")) {
+            statement.setString(1, circuitId.toString()); statement.setString(2, nodeId.toString());
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return Optional.empty();
+                return Optional.of(new ArcCoreBinding(UUID.fromString(row.getString(1)), UUID.fromString(row.getString(2)),
+                        circuitId, nodeId, UUID.fromString(row.getString(3)), UUID.fromString(row.getString(4)),
+                        row.getObject(5) == null ? null : row.getLong(5), row.getString(6), row.getInt(7), row.getLong(8), row.getLong(9)));
+            }
+        } catch (SQLException error) { throw new IllegalStateException("Could not read ArcSys core binding", error); }
+    }
+
+    synchronized List<ArcCoreBinding> arcCoreBindings(UUID ownerId) {
+        List<ArcCoreBinding> result = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT binding_uuid,circuit_uuid,node_uuid,fragment_instance_uuid,arc_spell_uuid,pinned_revision,
+                       binding_mode,schema_version,created_at,updated_at FROM arc_core_bindings
+                WHERE owner_uuid=? ORDER BY updated_at DESC""")) {
+            statement.setString(1, ownerId.toString());
+            try (ResultSet row = statement.executeQuery()) { while (row.next()) result.add(new ArcCoreBinding(
+                    UUID.fromString(row.getString(1)), ownerId, UUID.fromString(row.getString(2)), UUID.fromString(row.getString(3)),
+                    UUID.fromString(row.getString(4)), UUID.fromString(row.getString(5)), row.getObject(6) == null ? null : row.getLong(6),
+                    row.getString(7), row.getInt(8), row.getLong(9), row.getLong(10))); }
+            return result;
+        } catch (SQLException error) { throw new IllegalStateException("Could not list ArcSys core bindings", error); }
+    }
+
+    synchronized boolean deleteArcCoreBinding(UUID ownerId, UUID circuitId, UUID nodeId) {
+        Optional<ArcCoreBinding> existing = arcCoreBinding(circuitId, nodeId);
+        if (existing.isEmpty() || !existing.get().ownerId().equals(ownerId)) return false;
+        try (PreparedStatement statement = connection.prepareStatement(
+                "DELETE FROM arc_core_bindings WHERE owner_uuid=? AND circuit_uuid=? AND node_uuid=?")) {
+            statement.setString(1, ownerId.toString()); statement.setString(2, circuitId.toString()); statement.setString(3, nodeId.toString());
+            boolean deleted = statement.executeUpdate() == 1;
+            if (deleted) auditArcCore(ownerId, existing.get().bindingId(), circuitId, nodeId, "UNBIND", "OK", "");
+            return deleted;
+        } catch (SQLException error) { throw new IllegalStateException("Could not delete ArcSys core binding", error); }
+    }
+
+    private void pruneArcCoreBindings(Circuit circuit) throws SQLException {
+        Map<UUID, UUID> valid = new HashMap<>();
+        for (CircuitNode node : circuit.nodes()) if (node.fragmentId().equals("ARCSYS_CORE"))
+            valid.put(node.nodeId(), node.fragmentInstanceId());
+        try (PreparedStatement select = connection.prepareStatement(
+                "SELECT node_uuid,fragment_instance_uuid FROM arc_core_bindings WHERE circuit_uuid=?");
+             PreparedStatement delete = connection.prepareStatement(
+                     "DELETE FROM arc_core_bindings WHERE circuit_uuid=? AND node_uuid=?")) {
+            select.setString(1, circuit.circuitId().toString());
+            try (ResultSet rows = select.executeQuery()) { while (rows.next()) {
+                UUID nodeId = UUID.fromString(rows.getString(1)); UUID instanceId = UUID.fromString(rows.getString(2));
+                if (instanceId.equals(valid.get(nodeId))) continue;
+                delete.setString(1, circuit.circuitId().toString()); delete.setString(2, nodeId.toString()); delete.addBatch();
+            }}
+            delete.executeBatch();
+        }
+    }
+
+    synchronized void auditArcCore(UUID ownerId, UUID bindingId, UUID circuitId, UUID nodeId,
+                                   String action, String result, String details) {
+        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO arc_core_audit VALUES(?,?,?,?,?,?,?,?,?)")) {
+            statement.setString(1, UUID.randomUUID().toString()); statement.setString(2, ownerId.toString());
+            if (bindingId == null) statement.setNull(3, Types.VARCHAR); else statement.setString(3, bindingId.toString());
+            statement.setString(4, circuitId.toString()); statement.setString(5, nodeId.toString());
+            statement.setString(6, action); statement.setString(7, result); statement.setString(8, Objects.requireNonNullElse(details, ""));
+            statement.setLong(9, System.currentTimeMillis()); statement.executeUpdate();
+        } catch (SQLException error) { throw new IllegalStateException("Could not audit ArcSys core", error); }
     }
 
     synchronized ArcSpellRevision deployArcSpell(UUID ownerId, UUID requestedId, long expectedRevision,
@@ -791,6 +937,16 @@ final class SpellDatabase implements AutoCloseable {
                             String sourceHash, String capabilities, String requirements, long createdAt) { }
     record ArcDeployAudit(UUID spellId, long requestedRevision, String resultCode, String sourceHash, long createdAt) { }
     record ArcStateRecord(String type, Object value, int schemaVersion, Long expiresAt, long updatedAt) { }
+    record ArcCoreBinding(UUID bindingId, UUID ownerId, UUID circuitId, UUID nodeId, UUID fragmentInstanceId,
+                          UUID spellId, Long pinnedRevision, String mode, int schemaVersion,
+                          long createdAt, long updatedAt) {
+        ArcCoreBinding {
+            mode = Objects.requireNonNullElse(mode, "PINNED").toUpperCase(Locale.ROOT);
+            if (!mode.equals("PINNED") && !mode.equals("LATEST")) throw new IllegalArgumentException("binding mode");
+            if (mode.equals("PINNED") && (pinnedRevision == null || pinnedRevision < 1)) throw new IllegalArgumentException("pinned revision");
+            if (mode.equals("LATEST")) pinnedRevision = null;
+        }
+    }
     static final class OptimisticConflict extends RuntimeException { final long revision; OptimisticConflict(long revision) { this.revision = revision; } }
     static final class FragmentUnavailable extends RuntimeException { final UUID instanceId; FragmentUnavailable(UUID instanceId) { this.instanceId = instanceId; } }
     static final class FragmentStorageFull extends RuntimeException {

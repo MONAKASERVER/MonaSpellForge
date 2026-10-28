@@ -2,7 +2,7 @@
   "name": "arcsys-vscode",
   "displayName": "ArcSys 2.0 — Magic Engine",
   "description": "MonaSpellForge ArcSys language tools and authenticated Fabric bridge",
-  "version": "2.0.0-alpha.1",
+  "version": "2.0.0-alpha.2",
   "publisher": "monaka-server",
   "repository": { "type": "git", "url": "https://github.com/MONAKASERVER/MonaSpellForge.git" },
   "license": "MIT",
@@ -35,6 +35,11 @@
       { "command": "arcsys.debugStep", "title": "ArcSys: Step Instruction" },
       { "command": "arcsys.debugStop", "title": "ArcSys: Stop Debugging" },
       { "command": "arcsys.logs", "title": "ArcSys: View ArcVM Logs" },
+      { "command": "arcsys.bindCore", "title": "ArcSys: Bind Program to Core" },
+      { "command": "arcsys.unbindCore", "title": "ArcSys: Unbind Program from Core" },
+      { "command": "arcsys.listCores", "title": "ArcSys: List ArcSys Cores" },
+      { "command": "arcsys.inspectCore", "title": "ArcSys: Inspect Core" },
+      { "command": "arcsys.validateCoreBinding", "title": "ArcSys: Validate Core Binding" },
       { "command": "arcsys.disconnect", "title": "ArcSys: Disconnect" }
     ],
     "viewsContainers": {
