@@ -21,6 +21,7 @@ final class ArcCoreScreen extends Screen {
     private int selected; private String mode = "PINNED"; private String status = "読込中";
     private String program = "未設定"; private long revision; private int level; private String lastResult = "-";
     private Button programButton, modeButton;
+    private ControlMode controlMode = ControlMode.EASY;
 
     ArcCoreScreen(Screen parent, String token, UUID circuitId, UUID nodeId) {
         super(Component.literal("術式演算核 — プログラム制御パネル"));
@@ -28,31 +29,62 @@ final class ArcCoreScreen extends Screen {
     }
 
     @Override protected void init() {
-        int cx = width / 2, y = Math.max(72, height / 2 - 110), w = Math.min(190, width / 3);
-        programButton = addRenderableWidget(Button.builder(Component.literal("プログラムを選択"), b -> cycleProgram()).bounds(cx - w - 4, y + 118, w, 20).build());
-        modeButton = addRenderableWidget(Button.builder(Component.literal("方式: " + mode), b -> { mode = mode.equals("PINNED") ? "LATEST" : "PINNED"; b.setMessage(Component.literal("方式: " + mode)); }).bounds(cx + 4, y + 118, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("設定保存"), b -> bind()).bounds(cx - w - 4, y + 144, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("紐付け解除"), b -> request("unbindCore", object())).bounds(cx + 4, y + 144, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("プログラム検証"), b -> request("validateCoreBinding", object())).bounds(cx - w - 4, y + 170, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("実行ログ"), b -> request("logs", new JsonObject())).bounds(cx + 4, y + 170, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("シミュレーション"), b -> request("simulateCore", object())).bounds(cx - w - 4, y + 196, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("VS Codeかんたん編集"), b -> openVsCode()).bounds(cx + 4, y + 196, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("再読込"), b -> { request("listSpells", new JsonObject()); request("inspectCore", object()); }).bounds(cx - w - 4, y + 222, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("閉じる"), b -> onClose()).bounds(cx + 4, y + 222, w, 20).build());
+        int panelW = panelWidth(), x = (width - panelW) / 2, y = panelTop();
+        Button easy = addRenderableWidget(Button.builder(Component.literal(controlMode == ControlMode.EASY ? "● かんたんモード" : "かんたんモード"),
+                b -> switchMode(ControlMode.EASY)).bounds(x + panelW - 226, y + 9, 104, 20).build());
+        Button advanced = addRenderableWidget(Button.builder(Component.literal(controlMode == ControlMode.ADVANCED ? "● アドバンスド" : "アドバンスド"),
+                b -> switchMode(ControlMode.ADVANCED)).bounds(x + panelW - 116, y + 9, 104, 20).build());
+        easy.active = controlMode != ControlMode.EASY;
+        advanced.active = controlMode != ControlMode.ADVANCED;
+
+        if (controlMode == ControlMode.EASY) initEasyWidgets(x, y, panelW);
+        else initAdvancedWidgets(x, y, panelW);
         request("listSpells", new JsonObject()); request("inspectCore", object());
+    }
+
+    private void initEasyWidgets(int x, int y, int panelW) {
+        int left = x + 22, contentW = panelW - 44;
+        addRenderableWidget(Button.builder(Component.literal("① VS Codeで術式を作る・編集"), b -> openVsCode())
+                .bounds(left, y + 158, contentW, 24).build());
+        programButton = addRenderableWidget(Button.builder(Component.literal("② 保存済み術式を選ぶ"), b -> cycleProgram())
+                .bounds(left, y + 190, contentW, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("③ 選択した術式をこのCoreで使う"), b -> bindLatest())
+                .bounds(left, y + 216, contentW, 20).build());
+        int half = (contentW - 8) / 2;
+        addRenderableWidget(Button.builder(Component.literal("状態を更新"), b -> reload()).bounds(left, y + 250, half, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("閉じる"), b -> onClose()).bounds(left + half + 8, y + 250, half, 20).build());
+    }
+
+    private void initAdvancedWidgets(int x, int y, int panelW) {
+        int w = (panelW - 52) / 2, left = x + 22, right = left + w + 8;
+        programButton = addRenderableWidget(Button.builder(Component.literal("プログラムを選択"), b -> cycleProgram()).bounds(left, y + 158, w, 20).build());
+        modeButton = addRenderableWidget(Button.builder(Component.literal("方式: " + mode), b -> { mode = mode.equals("PINNED") ? "LATEST" : "PINNED"; b.setMessage(Component.literal("方式: " + mode)); }).bounds(right, y + 158, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("設定保存"), b -> bind()).bounds(left, y + 184, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("紐付け解除"), b -> request("unbindCore", object())).bounds(right, y + 184, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("プログラム検証"), b -> request("validateCoreBinding", object())).bounds(left, y + 210, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("実行ログ"), b -> request("logs", new JsonObject())).bounds(right, y + 210, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("シミュレーション"), b -> request("simulateCore", object())).bounds(left, y + 236, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("VS Codeかんたん編集"), b -> openVsCode()).bounds(right, y + 236, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("再読込"), b -> reload()).bounds(left, y + 262, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("閉じる"), b -> onClose()).bounds(right, y + 262, w, 20).build());
     }
 
     @Override public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
         graphics.fill(0, 0, width, height, BG);
-        int panelW = Math.min(620, width - 30), panelH = Math.min(330, height - 30), x = (width - panelW) / 2, y = (height - panelH) / 2;
+        int panelW = panelWidth(), panelH = panelHeight(), x = (width - panelW) / 2, y = panelTop();
         graphics.fill(x, y, x + panelW, y + panelH, BORDER); graphics.fill(x + 2, y + 2, x + panelW - 2, y + panelH - 2, PANEL);
-        graphics.centeredText(font, title, width / 2, y + 14, PURPLE);
+        graphics.text(font, title, x + 18, y + 15, PURPLE, false);
         int tx = x + 22, ty = y + 46;
         graphics.text(font, Component.literal("現在の術式: " + program), tx, ty, TEXT, false);
         graphics.text(font, Component.literal("Revision: " + revision + "   Mode: " + mode), tx, ty + 18, CYAN, false);
         graphics.text(font, Component.literal("Node Lv." + level + "   Status: " + status), tx, ty + 36, status.equals("READY") ? 0xFF72E6A5 : 0xFFFFC66D, false);
-        graphics.text(font, Component.literal("入力: EXEC / ENTITY / LOCATION / NUMBER / BOOLEAN"), tx, ty + 58, MUTED, false);
-        graphics.text(font, Component.literal("出力: EXEC(success/fail) / ENTITY / NUMBER / BOOLEAN"), tx, ty + 74, MUTED, false);
+        if (controlMode == ControlMode.EASY) {
+            graphics.text(font, Component.literal("1. VS Code編集を押す → 2. かんたんスタート → 3. Ctrl+Sで自動反映"), tx, ty + 62, MUTED, false);
+            graphics.text(font, Component.literal("VS Codeを使わない場合は、保存済み術式を選んで③を押してください"), tx, ty + 80, MUTED, false);
+        } else {
+            graphics.text(font, Component.literal("入力: EXEC / ENTITY / LOCATION / NUMBER / BOOLEAN"), tx, ty + 58, MUTED, false);
+            graphics.text(font, Component.literal("出力: EXEC(success/fail) / ENTITY / NUMBER / BOOLEAN"), tx, ty + 74, MUTED, false);
+        }
         graphics.text(font, Component.literal(fit(lastResult, Math.max(20, panelW / 7))), tx, y + panelH - 28, MUTED, false);
         super.extractRenderState(graphics, mouseX, mouseY, delta);
     }
@@ -76,7 +108,7 @@ final class ArcCoreScreen extends Screen {
             } else if (action.equals("inspectCore") || action.equals("bindCore") || action.equals("validateCoreBinding")) {
                 status = text(result, "status", "UNKNOWN"); program = text(result, "program", "未設定");
                 revision = number(result, "revision"); level = (int) number(result, "level"); mode = text(result, "mode", mode);
-                modeButton.setMessage(Component.literal("方式: " + mode)); lastResult = action + ": " + status;
+                if (modeButton != null) modeButton.setMessage(Component.literal("方式: " + mode)); lastResult = action + ": " + status;
             } else if (action.equals("unbindCore")) { status = "UNBOUND"; program = "未設定"; revision = 0; lastResult = "紐付けを解除しました"; }
             else if (action.equals("logs")) lastResult = "デプロイ・実行ログを取得しました（VS Code出力でも確認できます）";
             else if (action.equals("simulateCore")) lastResult = "Simulation: " + text(result, "status", "UNKNOWN")
@@ -85,8 +117,15 @@ final class ArcCoreScreen extends Screen {
     }
 
     private void cycleProgram() { if (spells.isEmpty()) { lastResult = "先にVS Codeから術式をデプロイしてください"; return; } selected = (selected + 1) % spells.size(); refreshProgramButton(); }
-    private void refreshProgramButton() { if (programButton != null) programButton.setMessage(Component.literal(spells.isEmpty() ? "プログラムなし" : spells.get(selected).name + " rev." + spells.get(selected).revision)); }
+    private void refreshProgramButton() {
+        if (programButton == null) return;
+        String label = spells.isEmpty() ? "プログラムなし" : spells.get(selected).name + " rev." + spells.get(selected).revision;
+        programButton.setMessage(Component.literal(controlMode == ControlMode.EASY ? "② 保存済み術式: " + label : label));
+    }
     private void bind() { if (spells.isEmpty()) { lastResult = "プログラムがありません"; return; } SpellChoice spell = spells.get(selected); JsonObject payload = object(); payload.addProperty("spellId", spell.id); payload.addProperty("revision", spell.revision); payload.addProperty("mode", mode); request("bindCore", payload); }
+    private void bindLatest() { mode = "LATEST"; bind(); }
+    private void reload() { request("listSpells", new JsonObject()); request("inspectCore", object()); }
+    private void switchMode(ControlMode next) { if (controlMode == next) return; controlMode = next; modeButton = null; programButton = null; rebuildWidgets(); }
     private void openVsCode() {
         String code = ArcSysDeveloperBridge.start(minecraft, token, circuitId, nodeId);
         if (code.equals("起動失敗")) {
@@ -101,6 +140,10 @@ final class ArcCoreScreen extends Screen {
     private static String text(JsonObject value, String key, String fallback) { return value.has(key) ? value.get(key).getAsString() : fallback; }
     private static long number(JsonObject value, String key) { return value.has(key) ? value.get(key).getAsLong() : 0; }
     private static String fit(String value, int length) { return value.length() <= length ? value : value.substring(0, Math.max(1, length - 1)) + "…"; }
+    private int panelWidth() { return Math.min(680, width - 30); }
+    private int panelHeight() { return Math.min(350, height - 30); }
+    private int panelTop() { return (height - panelHeight()) / 2; }
     @Override public void onClose() { minecraft.setScreen(parent); }
+    private enum ControlMode { EASY, ADVANCED }
     private record SpellChoice(String id, String name, long revision) { }
 }

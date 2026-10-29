@@ -1,6 +1,6 @@
 allprojects {
     group = "net.monacraft.spellforge"
-    version = "2.0.0-alpha.11"
+    version = "2.0.0-alpha.12"
 
     repositories {
         mavenCentral()

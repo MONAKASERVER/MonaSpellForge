@@ -45,6 +45,8 @@ Right-click an `ARCSYS_CORE` in the Fabric circuit editor and select `VS Codeで
 - a successful deployment is bound back to the selected Core in `LATEST` mode;
 - compile, permission, revision or binding failures leave the previous binding unchanged and are shown in `ArcSys / ArcVM` output.
 
+The ARCSYS_CORE control panel opens in **かんたんモード** by default. It presents the workflow as three numbered actions: open VS Code editing, select an existing spell when needed, and use the selected spell on the Core. The mode selectors in the upper-right switch to **アドバンスド**, which preserves revision pinning, unbind, validation, logs and simulation controls.
+
 Core-scoped automatic deployment applies only to the document opened by this explicit editing session. Ordinary `.arc` files and normal VS Code connections require the manual deploy command by default, unless the optional setting below is enabled.
 
 ## Optional Auto Deploy on Save
