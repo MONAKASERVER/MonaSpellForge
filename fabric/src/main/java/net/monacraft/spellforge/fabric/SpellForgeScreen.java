@@ -52,6 +52,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_HOME;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_Y;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_Z;
 import static org.lwjgl.util.tinyfd.TinyFileDialogs.tinyfd_openFileDialog;
@@ -71,6 +72,8 @@ public final class SpellForgeScreen extends Screen {
     private static final double WORLD_MIN = -64.0;
     private static final double WORLD_MAX = 68.0;
     private static final double POSITION_SNAP = 0.25;
+    private static final double MIN_ZOOM = 0.02;
+    private static final double MAX_ZOOM = 1.55;
     private static final int PAN_LIMIT = 24_000;
 
     private static final int BACKDROP = 0xD0080B12;
@@ -102,6 +105,7 @@ public final class SpellForgeScreen extends Screen {
     private double zoom = 1.0;
     private int panX;
     private int panY;
+    private boolean viewportInitialized;
 
     private UUID draggingNode;
     private Circuit dragStartCircuit;
@@ -159,6 +163,14 @@ public final class SpellForgeScreen extends Screen {
                 .bounds(x + (buttonWidth + gap) * 5, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("monaspellforge.close"), button -> onClose())
                 .bounds(x + (buttonWidth + gap) * 6, y, buttonWidth, 20).build());
+
+        Rect canvas = canvasRect();
+        addRenderableWidget(Button.builder(Component.literal("全体表示"), button -> focusAllNodes(true))
+                .bounds(canvas.right() - 70, canvas.y + 6, 62, 20).build());
+        if (!viewportInitialized) {
+            viewportInitialized = true;
+            focusAllNodes(false);
+        }
     }
 
     void accept(SpellForgeProtocol.Frame frame) {
@@ -330,6 +342,7 @@ public final class SpellForgeScreen extends Screen {
             saveHistory();
             circuit = circuit.withContent(nodes, edges);
             refreshValidation();
+            focusAllNodes(false);
             status = Component.literal(".arcからノード回路を取り込みました。検証後に保存してください");
             statusColor = STATUS_WARNING;
         } catch (RuntimeException error) {
@@ -854,7 +867,7 @@ public final class SpellForgeScreen extends Screen {
             return true;
         }
         if (canvasRect().contains(mouseX, mouseY)) {
-            zoom = clamp(zoom + vertical * 0.08, 0.65, 1.55);
+            zoom = clamp(zoom + vertical * 0.08, MIN_ZOOM, MAX_ZOOM);
             status = Component.literal("表示倍率 " + Math.round(zoom * 100) + "%");
             statusColor = TEXT_MUTED;
             return true;
@@ -864,6 +877,10 @@ public final class SpellForgeScreen extends Screen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
+        if (event.key() == GLFW_KEY_HOME && (searchBox == null || !searchBox.isFocused())) {
+            focusAllNodes(true);
+            return true;
+        }
         if (event.hasControlDown() && event.key() == GLFW_KEY_Z) {
             undo();
             return true;
@@ -1117,13 +1134,33 @@ public final class SpellForgeScreen extends Screen {
         double pivotX = canvas.x + canvas.width / 2.0;
         double pivotY = canvas.y + canvas.height / 2.0;
         for (CircuitNode node : circuit.nodes()) {
-            double worldX = (clamp(node.uiX(), WORLD_MIN, WORLD_MAX) - 2.0) * WORLD_UNIT;
-            double worldY = (clamp(node.uiY(), WORLD_MIN, WORLD_MAX) - 2.0) * WORLD_UNIT;
+            double fallbackX = Math.floorMod(node.slotIndex(), 5);
+            double fallbackY = Math.floorDiv(Math.max(0, node.slotIndex()), 5);
+            double safeX = CircuitViewport.coordinate(node.uiX(), fallbackX, WORLD_MIN, WORLD_MAX);
+            double safeY = CircuitViewport.coordinate(node.uiY(), fallbackY, WORLD_MIN, WORLD_MAX);
+            double worldX = (safeX - 2.0) * WORLD_UNIT;
+            double worldY = (safeY - 2.0) * WORLD_UNIT;
             int nodeX = (int) Math.round(pivotX + worldX * zoom + panX);
             int nodeY = (int) Math.round(pivotY + worldY * zoom + panY);
             result.put(node.nodeId(), new NodeBox(nodeX, nodeY, scaledNodeWidth(), scaledNodeHeight()));
         }
         return result;
+    }
+
+    private void focusAllNodes(boolean announce) {
+        Rect canvas = canvasRect();
+        CircuitViewport.View view = CircuitViewport.fit(circuit.nodes(), canvas.width, canvas.height,
+                WORLD_UNIT, NODE_WIDTH, NODE_HEIGHT, WORLD_MIN, WORLD_MAX,
+                MIN_ZOOM, Math.min(1.0, MAX_ZOOM), PAN_LIMIT);
+        zoom = view.zoom();
+        panX = view.panX();
+        panY = view.panY();
+        if (announce) {
+            status = Component.literal(circuit.nodes().isEmpty()
+                    ? "表示位置を初期化しました"
+                    : "全ノードを画面内へ戻しました（Homeキーでも実行できます）");
+            statusColor = view.repairedCoordinates() ? STATUS_WARNING : CONNECTED;
+        }
     }
 
     private WorldPoint screenToWorld(int mouseX, int mouseY) {
