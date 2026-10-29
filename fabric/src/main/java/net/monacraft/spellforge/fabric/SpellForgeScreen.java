@@ -32,7 +32,12 @@ import net.monacraft.spellforge.model.SpellModel.PortDefinition;
 import net.monacraft.spellforge.model.SpellModel.PortType;
 import net.monacraft.spellforge.model.SpellModel.ValidationIssue;
 import net.monacraft.spellforge.protocol.SpellForgeProtocol;
+import org.lwjgl.PointerBuffer;
+import org.lwjgl.system.MemoryStack;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -49,6 +54,7 @@ import java.util.UUID;
 
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_Y;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_Z;
+import static org.lwjgl.util.tinyfd.TinyFileDialogs.tinyfd_openFileDialog;
 
 public final class SpellForgeScreen extends Screen {
     private static final FragmentCatalog CATALOG = FragmentCatalog.defaults();
@@ -105,6 +111,10 @@ public final class SpellForgeScreen extends Screen {
     private double lastMouseX;
     private double lastMouseY;
     private ContextMenu contextMenu;
+    private UUID pendingVsCodeCore;
+    private UUID pendingCoreConfiguration;
+    private UUID pendingModEditorCore;
+    private UUID pendingArcFileImport;
 
     SpellForgeScreen(Screen parent, Circuit circuit, String token) {
         super(Component.translatable("monaspellforge.title"));
@@ -143,9 +153,9 @@ public final class SpellForgeScreen extends Screen {
                 .bounds(x + (buttonWidth + gap) * 2, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("monaspellforge.save"), button -> send(SpellForgeProtocol.Type.SAVE_REQ))
                 .bounds(x + (buttonWidth + gap) * 3, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("出力"), button -> exportArc())
+        addRenderableWidget(Button.builder(Component.literal(".arc出力"), button -> exportArc())
                 .bounds(x + (buttonWidth + gap) * 4, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("取込"), button -> importArc())
+        addRenderableWidget(Button.builder(Component.literal(".arc読込"), button -> importArc())
                 .bounds(x + (buttonWidth + gap) * 5, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("monaspellforge.close"), button -> onClose())
                 .bounds(x + (buttonWidth + gap) * 6, y, buttonWidth, 20).build());
@@ -159,6 +169,9 @@ public final class SpellForgeScreen extends Screen {
                 try {
                     JsonObject response = JsonParser.parseString(frame.payload()).getAsJsonObject();
                     if (response.has("saved") && !response.get("saved").getAsBoolean()) {
+                        pendingVsCodeCore = null;
+                        pendingCoreConfiguration = null;
+                        pendingModEditorCore = null;
                         setError("保存できませんでした: " + readableError(response.has("message")
                                 ? response.get("message").getAsString() : "SERVER_REJECTED"));
                         return;
@@ -168,10 +181,36 @@ public final class SpellForgeScreen extends Screen {
                     circuit = new Circuit(circuit.circuitId(), circuit.ownerId(), circuit.name(), frame.baseRevision(),
                             circuit.schemaVersion(), circuit.nodes(), circuit.edges(), circuit.createdAt(), circuit.updatedAt());
                 }
-                status = Component.literal("保存しました（Revision " + frame.baseRevision() + "）");
-                statusColor = CONNECTED;
+                boolean draft = validation != null && !validation.valid();
+                status = Component.literal((draft ? "下書きを保存しました" : "保存しました")
+                        + "（Revision " + frame.baseRevision() + "）");
+                statusColor = draft ? STATUS_WARNING : CONNECTED;
+                if (pendingCoreConfiguration != null) {
+                    UUID targetNode = pendingCoreConfiguration;
+                    pendingCoreConfiguration = null;
+                    minecraft.setScreen(new ArcCoreScreen(this, token, circuit.circuitId(), targetNode));
+                    return;
+                }
+                if (pendingModEditorCore != null) {
+                    UUID targetNode = pendingModEditorCore;
+                    pendingModEditorCore = null;
+                    minecraft.setScreen(new ArcCodeEditorScreen(this, token, circuit.circuitId(), targetNode));
+                    return;
+                }
+                if (pendingVsCodeCore != null) {
+                    UUID targetNode = pendingVsCodeCore;
+                    pendingVsCodeCore = null;
+                    String code = ArcSysDeveloperBridge.start(minecraft, token, circuit.circuitId(), targetNode);
+                    if (code.equals("起動失敗")) setError("VS Code Bridgeを起動できませんでした");
+                    else {
+                        minecraft.keyboardHandler.setClipboard(code);
+                        status = Component.literal("VS Codeコードをコピーしました — 「ArcSys: かんたんスタート」で接続");
+                        statusColor = CONNECTED;
+                    }
+                }
             }
             case CONFLICT -> setError("別の画面で更新されています。/msf open で開き直してください");
+            case ARC_FILE_IMPORT_RESULT -> acceptArcFileImport(frame);
             case ERROR -> setError("通信エラー: " + readableError(frame.payload()));
             default -> { }
         }
@@ -201,15 +240,63 @@ public final class SpellForgeScreen extends Screen {
     }
 
     private void exportArc() {
-        String source = ArcCircuitCodec.toArcSource(circuit);
-        minecraft.keyboardHandler.setClipboard(source);
-        status = Component.literal("回路を.arc形式でクリップボードへ出力しました");
-        statusColor = CONNECTED;
+        status = Component.literal("ダウンロードフォルダーへ.arcを保存しています…");
+        statusColor = STATUS_WARNING;
+        Circuit snapshot = circuit;
+        Thread.startVirtualThread(() -> {
+            try {
+                Path destination = ArcFileTransfer.exportToDownloads(snapshot);
+                minecraft.execute(() -> {
+                    status = Component.literal(destination.getFileName() + " をダウンロードフォルダーへ保存しました");
+                    statusColor = CONNECTED;
+                });
+            } catch (IOException | RuntimeException error) {
+                minecraft.execute(() -> setError(".arcを保存できませんでした: " + readableFileError(error)));
+            }
+        });
     }
 
     private void importArc() {
+        status = Component.literal("読み込む.arcファイルを選択してください…");
+        statusColor = STATUS_WARNING;
+        Thread.startVirtualThread(() -> {
+            File selected = chooseArcFile();
+            if (selected == null) {
+                minecraft.execute(() -> {
+                    status = Component.literal(".arcの読み込みをキャンセルしました");
+                    statusColor = TEXT_MUTED;
+                });
+                return;
+            }
+            try {
+                String source = ArcFileTransfer.readArc(selected.toPath());
+                minecraft.execute(() -> applyImportedArc(source));
+            } catch (IOException | RuntimeException error) {
+                minecraft.execute(() -> setError(".arcを読み込めませんでした: " + readableFileError(error)));
+            }
+        });
+    }
+
+    private File chooseArcFile() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer filters = stack.mallocPointer(1);
+            filters.put(stack.UTF8("*.arc")).flip();
+            String selected = tinyfd_openFileDialog(
+                    "MonaSpellForge — .arcを読み込む",
+                    ArcFileTransfer.downloadsDirectory().resolve("spell.arc").toString(),
+                    filters,
+                    "ArcSys source (*.arc)",
+                    false);
+            return selected == null || selected.isBlank() ? null : new File(selected);
+        }
+    }
+
+    private void applyImportedArc(String source) {
+        if (!ArcCircuitCodec.hasEmbeddedCircuit(source)) {
+            deployImportedArc(source);
+            return;
+        }
         try {
-            String source = minecraft.keyboardHandler.getClipboard();
             ArcCircuitCodec.PortableCircuit imported = ArcCircuitCodec.fromArcSource(source);
 
             Map<PaletteKey, ArrayDeque<OwnedFragment>> available = new HashMap<>();
@@ -248,8 +335,59 @@ public final class SpellForgeScreen extends Screen {
         } catch (RuntimeException error) {
             setError(error.getMessage() != null && error.getMessage().startsWith("missing:")
                     ? "必要な所持欠片が不足しています: " + error.getMessage().substring(8)
-                    : "対応するMonaSpellForge .arcをクリップボードから読み込めませんでした");
+                    : "対応するMonaSpellForge .arcではありません");
         }
+    }
+
+    private void deployImportedArc(String source) {
+        byte[] encoded = source.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (encoded.length > 23_000) {
+            setError("ArcSysソースが転送上限（23 KB）を超えています。VS Code Bridgeを使用してください");
+            return;
+        }
+        UUID requestId = UUID.randomUUID();
+        JsonObject payload = new JsonObject();
+        payload.addProperty("source", source);
+        payload.addProperty("explicit", true);
+        pendingArcFileImport = requestId;
+        MonaSpellForgeClient.send(new SpellForgeProtocol.Frame(
+                SpellForgeProtocol.Type.ARC_FILE_IMPORT_REQ, requestId, token, null, 0, payload.toString()));
+        status = Component.literal("ArcSysソースをサーバーで検証・読み込み中です…");
+        statusColor = STATUS_WARNING;
+    }
+
+    private void acceptArcFileImport(SpellForgeProtocol.Frame frame) {
+        if (pendingArcFileImport == null || !pendingArcFileImport.equals(frame.requestId())) return;
+        pendingArcFileImport = null;
+        try {
+            JsonObject response = JsonParser.parseString(frame.payload()).getAsJsonObject();
+            if (!response.has("ok") || !response.get("ok").getAsBoolean()) {
+                String message = response.has("message") ? response.get("message").getAsString() : "SERVER_REJECTED";
+                setError("ArcSysソースを読み込めませんでした: " + message);
+                return;
+            }
+            JsonObject result = response.getAsJsonObject("result");
+            if (result == null || !result.has("valid") || !result.get("valid").getAsBoolean()) {
+                String message = "構文または型にエラーがあります";
+                if (result != null && result.has("diagnostics") && result.getAsJsonArray("diagnostics").size() > 0) {
+                    JsonObject diagnostic = result.getAsJsonArray("diagnostics").get(0).getAsJsonObject();
+                    message = jsonText(diagnostic, "message", message)
+                            + "（" + (diagnostic.has("line") ? diagnostic.get("line").getAsInt() : 1) + "行目）";
+                }
+                setError("ArcSysソースを読み込めませんでした: " + message);
+                return;
+            }
+            long revision = result.has("revision") ? result.get("revision").getAsLong() : 1;
+            status = Component.literal("ArcSys術式として読み込みました（Revision " + revision + "）");
+            statusColor = CONNECTED;
+        } catch (RuntimeException error) {
+            setError("ArcSysソースの応答を処理できませんでした: " + readableFileError(error));
+        }
+    }
+
+    private static String readableFileError(Exception error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
     }
 
     private void acceptValidation(String payload) {
@@ -573,9 +711,9 @@ public final class SpellForgeScreen extends Screen {
         CircuitNode contextNode = menu.nodeId == null ? null : node(menu.nodeId);
         List<String> labels = menu.nodeId == null ? List.of("ノードを追加")
                 : contextNode != null && contextNode.fragmentId().equals("ARCSYS_CORE")
-                ? List.of("ArcSys制御パネル", "ノードを複製", "ノードをしまう", "ノードを追加")
+                ? List.of("Mod内でコード編集", "VS Codeで編集", "ArcSys制御パネル", "ノードを複製", "ノードをしまう", "ノードを追加")
                 : List.of("ノードを複製", "ノードをしまう", "ノードを追加");
-        int menuWidth = 132;
+        int menuWidth = 156;
         int menuHeight = labels.size() * 22 + 6;
         int x = Math.min(menu.x, width - menuWidth - 4);
         int y = Math.min(menu.y, height - menuHeight - 4);
@@ -834,9 +972,9 @@ public final class SpellForgeScreen extends Screen {
         CircuitNode contextNode = menu.nodeId == null ? null : node(menu.nodeId);
         List<ContextAction> actions = menu.nodeId == null ? List.of(ContextAction.SEARCH)
                 : contextNode != null && contextNode.fragmentId().equals("ARCSYS_CORE")
-                ? List.of(ContextAction.CONFIGURE_CORE, ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH)
+                ? List.of(ContextAction.EDIT_CORE_IN_MOD, ContextAction.EDIT_CORE_VSCODE, ContextAction.CONFIGURE_CORE, ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH)
                 : List.of(ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH);
-        int width = 132;
+        int width = 156;
         int x = Math.min(menu.x, this.width - width - 4);
         int height = actions.size() * 22 + 6;
         int y = Math.min(menu.y, this.height - height - 4);
@@ -852,9 +990,45 @@ public final class SpellForgeScreen extends Screen {
             }
             case STOW -> stowNode(menu.nodeId);
             case DUPLICATE -> duplicateNode(menu.nodeId);
-            case CONFIGURE_CORE -> minecraft.setScreen(new ArcCoreScreen(this, token, circuit.circuitId(), menu.nodeId));
+            case CONFIGURE_CORE -> openCoreConfiguration(menu.nodeId);
+            case EDIT_CORE_VSCODE -> openCoreInVsCode(menu.nodeId);
+            case EDIT_CORE_IN_MOD -> openCoreInMod(menu.nodeId);
         }
         return true;
+    }
+
+    private void openCoreInVsCode(UUID nodeId) {
+        if (nodeId == null || node(nodeId) == null) {
+            setError("術式演算核が見つかりません");
+            return;
+        }
+        pendingVsCodeCore = nodeId;
+        send(SpellForgeProtocol.Type.SAVE_REQ);
+        status = Component.literal("回路を保存してVS Code接続を準備しています…");
+        statusColor = STATUS_WARNING;
+    }
+
+    private void openCoreInMod(UUID nodeId) {
+        if (nodeId == null || node(nodeId) == null) {
+            setError("術式演算核が見つかりません");
+            return;
+        }
+        pendingModEditorCore = nodeId;
+        send(SpellForgeProtocol.Type.SAVE_REQ);
+        status = Component.literal("回路を保存してMod内エディターを開いています…");
+        statusColor = STATUS_WARNING;
+    }
+
+    private void openCoreConfiguration(UUID nodeId) {
+        CircuitNode core = nodeId == null ? null : node(nodeId);
+        if (core == null || !core.fragmentId().equals("ARCSYS_CORE")) {
+            setError("術式演算核が見つかりません");
+            return;
+        }
+        pendingCoreConfiguration = nodeId;
+        send(SpellForgeProtocol.Type.SAVE_REQ);
+        status = Component.literal("回路を保存してCore設定を読み込んでいます…");
+        statusColor = STATUS_WARNING;
     }
 
     private void stowNode(UUID nodeId) {
@@ -1307,7 +1481,7 @@ public final class SpellForgeScreen extends Screen {
     @Override
     public boolean isPauseScreen() { return false; }
 
-    private enum ContextAction { CONFIGURE_CORE, DUPLICATE, STOW, SEARCH }
+    private enum ContextAction { EDIT_CORE_IN_MOD, EDIT_CORE_VSCODE, CONFIGURE_CORE, DUPLICATE, STOW, SEARCH }
     private enum CategoryTab {
         ALL("全部", null), TRIGGER("発動", Category.TRIGGER), ELEMENT("属性", Category.ELEMENT),
         SHAPE("形状", Category.SHAPE), TARGET("対象", Category.TARGET), MODIFIER("補助", Category.MODIFIER),

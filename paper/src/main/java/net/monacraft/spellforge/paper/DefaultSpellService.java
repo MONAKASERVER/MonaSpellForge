@@ -31,15 +31,17 @@ final class DefaultSpellService implements SpellService {
     private final ManaService mana;
     private final TickBudgetManager budgets;
     private final ArcCoreService arcCores;
+    private final McMmoExperienceGuard mcMmoExperience;
     private final SpellParticleRenderer particles;
     private final Map<UUID, Set<UUID>> active = new ConcurrentHashMap<>();
     private final Map<UUID, Set<BukkitTask>> scheduled = new ConcurrentHashMap<>();
     private final Map<String, Double> memory = new ConcurrentHashMap<>();
 
     DefaultSpellService(Plugin plugin, SpellDatabase database, CircuitCompiler compiler, ManaService mana,
-                        TickBudgetManager budgets, ArcCoreService arcCores) {
+                        TickBudgetManager budgets, ArcCoreService arcCores, McMmoExperienceGuard mcMmoExperience) {
         this.plugin = plugin; this.database = database; this.compiler = compiler; this.mana = mana; this.budgets = budgets;
         this.arcCores = arcCores;
+        this.mcMmoExperience = mcMmoExperience;
         this.particles = new SpellParticleRenderer(plugin.getConfig());
     }
 
@@ -246,10 +248,11 @@ final class DefaultSpellService implements SpellService {
     }
 
     private void dealDamage(Player caster, LivingEntity target, double damage, CompiledSpell spell) {
+        if (target instanceof Player player && isDamageImmune(player.getGameMode())) return;
         if (node(spell, "TRUE_DAMAGE") != null) {
             DamageSource source = DamageSource.builder(DamageType.GENERIC_KILL)
                     .withCausingEntity(caster).withDirectEntity(caster).build();
-            target.damage(damage, source);
+            mcMmoExperience.runWithoutExperience(caster, () -> target.damage(damage, source));
             return;
         }
         CircuitNode penetrationNode = node(spell, "ARMOR_PENETRATION");
@@ -275,6 +278,10 @@ final class DefaultSpellService implements SpellService {
     static double armorMultiplier(double damage, double armor, double toughness) {
         double reductionPoints = Math.min(20.0, Math.max(armor / 5.0, armor - damage / (2.0 + toughness / 4.0)));
         return 1.0 - reductionPoints / 25.0;
+    }
+
+    static boolean isDamageImmune(GameMode gameMode) {
+        return gameMode == GameMode.CREATIVE || gameMode == GameMode.SPECTATOR;
     }
 
     @Override public int cancel(UUID playerId) { Set<UUID> removed = active.remove(playerId);Set<BukkitTask> tasks=scheduled.remove(playerId);if(tasks!=null)tasks.forEach(BukkitTask::cancel);return removed == null ? 0 : removed.size(); }

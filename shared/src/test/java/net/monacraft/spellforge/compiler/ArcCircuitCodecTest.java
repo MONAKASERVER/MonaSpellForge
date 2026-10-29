@@ -35,4 +35,11 @@ class ArcCircuitCodecTest {
         assertThrows(IllegalArgumentException.class, () -> ArcCircuitCodec.fromArcSource(
                 source.replace(ArcCircuitCodec.MARKER, ArcCircuitCodec.MARKER + "A")));
     }
+
+    @Test void distinguishesEmbeddedCircuitFromOrdinaryArcSysSource() {
+        String embedded = ArcCircuitCodec.toArcSource(Circuit.empty(UUID.randomUUID()));
+        assertTrue(ArcCircuitCodec.hasEmbeddedCircuit(embedded));
+        assertTrue(ArcCircuitCodec.hasEmbeddedCircuit("  " + embedded));
+        assertFalse(ArcCircuitCodec.hasEmbeddedCircuit("spell FlameShot { on cast { return true; } }"));
+    }
 }

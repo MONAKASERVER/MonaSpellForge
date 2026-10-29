@@ -124,7 +124,8 @@ final class EditorGui implements Listener {
                 List.of("ノード: " + session.circuit.nodes().size() + "/25", "配線: " + session.circuit.edges().size() + "/64", "Revision: " + session.circuit.revision())));
         inventory.setItem(47, item(validation.valid() ? Material.LIME_DYE : Material.RED_DYE, "検証", validation.valid() ? NamedTextColor.GREEN : NamedTextColor.RED,
                 validation.valid() ? List.of("有効な回路です") : validation.issues().stream().limit(5).map(i -> i.code() + ": " + i.message()).toList()));
-        inventory.setItem(49, item(Material.WRITABLE_BOOK, "保存して有効化", NamedTextColor.GOLD, List.of("新しく装着した欠片を消費して回路へ封入")));
+        inventory.setItem(49, item(Material.WRITABLE_BOOK, "保存", NamedTextColor.GOLD,
+                List.of("新しく装着した欠片を消費して回路へ封入", "未完成の回路は下書きとして保存され、有効化されません")));
         inventory.setItem(51, item(Material.BLAZE_ROD, "テスト発動", NamedTextColor.LIGHT_PURPLE, List.of("保存中の回路を手動発動します")));
         List<String> storageLore = new ArrayList<>(List.of("クリック: 所持ノード一覧を開く",
                 "右クリック格納した欠片を選択できます"));
@@ -168,7 +169,14 @@ final class EditorGui implements Listener {
         if (raw == 47) { showValidation(player, circuits.validate(session.circuit)); return; }
         if (raw == 49) {
             CircuitService.SaveResult result = embedding.save(player, session.circuit, session.circuit.revision());
-            if (result.saved()) { session.circuit = result.circuit(); player.sendMessage(Component.text("魔術回路を保存しました。装着した欠片は回路へ封入されました", NamedTextColor.GREEN)); }
+            if (result.saved()) {
+                session.circuit = result.circuit();
+                boolean valid = circuits.validate(session.circuit).valid();
+                player.sendMessage(Component.text(valid
+                        ? "魔術回路を保存しました。装着した欠片は回路へ封入されました"
+                        : "未完成の魔術回路を下書き保存しました。検証エラーを直すまで有効化できません",
+                        valid ? NamedTextColor.GREEN : NamedTextColor.YELLOW));
+            }
             else player.sendMessage(Component.text(result.conflict() ? "別の画面で更新されています。開き直してください"
                     : result.message().equals("MISSING_FRAGMENT") ? "新しく装着した欠片が不足しています"
                     : result.message().startsWith("FRAGMENT_STORAGE_FULL") ? "所持ノードが上限255個のため、しまえません"

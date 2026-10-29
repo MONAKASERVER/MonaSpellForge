@@ -10,9 +10,10 @@ export class StudioProvider implements vscode.TreeDataProvider<StudioItem> {
   getTreeItem(element: StudioItem): vscode.TreeItem { return element; }
 
   getChildren(element?: StudioItem): StudioItem[] {
-    if (!this.snapshot) return [new StudioItem('Minecraft未接続', 'ArcSys: Connect to Minecraft を実行してください', vscode.TreeItemCollapsibleState.None)];
+    if (!this.snapshot) return [StudioItem.action('かんたんスタート', 'Minecraftでコピーしたコードから接続', 'arcsys.quickStart', 'plug')];
     if (!element) return [
       new StudioItem(`接続: ${this.snapshot.connectedServer ?? 'unknown'}`, this.snapshot.player ?? '', vscode.TreeItemCollapsibleState.None),
+      StudioItem.action('かんたん魔術作成', 'テンプレートから作成してすぐデプロイ', 'arcsys.createStarter', 'sparkle'),
       StudioItem.group('保存済み魔術', 'spells'), StudioItem.group('所有欠片', 'fragments'),
       StudioItem.group('術式演算核', 'cores'), StudioItem.group('使用可能API', 'apis'), StudioItem.group('デプロイ履歴', 'history')
     ];
@@ -33,5 +34,11 @@ export class StudioItem extends vscode.TreeItem {
   }
   static group(label: string, contextValue: string): StudioItem {
     const item = new StudioItem(label, '', vscode.TreeItemCollapsibleState.Collapsed); item.contextValue = contextValue; return item;
+  }
+  static action(label: string, description: string, command: string, icon: string): StudioItem {
+    const item = new StudioItem(label, description, vscode.TreeItemCollapsibleState.None);
+    item.command = { command, title: label };
+    item.iconPath = new vscode.ThemeIcon(icon);
+    return item;
   }
 }

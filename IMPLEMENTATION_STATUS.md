@@ -1,6 +1,48 @@
 # 実装状況
 
-更新: 2026-10-28
+更新: 2026-10-29
+
+## 2.0.0-alpha.9 — Editor / ARCSYS_CORE Usability Repair
+
+- AWTのheadless判定に依存していた`.arc読込`を、Minecraft同梱のLWJGL native file dialogへ移行
+- 未完成回路を安全な下書きとして保存可能にし、Coreの安定した回路ID・ノードIDを確定してから設定画面／VS Code Bridgeを開始
+- 未完成の下書きは自動的に無効化し、検証を通るまで有効化できないようサーバー側で強制
+- `ArcSys制御パネル`を未保存ノードIDで直接開かず、保存成功後だけ遷移
+- Core APIエラーを制御パネルのStatusと詳細欄に表示
+- ModなしGUIも通常保存と下書き保存を区別して案内
+
+## 2.0.0-alpha.8 — `.arc` Import Compatibility
+
+- Fabricの`.arc読込`でノード回路キャリアと通常のArcSysソースを自動判別
+- ノード回路キャリアは従来どおり所有欠片へ安全に再割当てして編集画面へ復元
+- 通常のArcSysソースはPaperへ送り、権限・構文・型・Capability・所有欠片要件をサーバー権威で再検証して新規術式として保存
+- コンパイル診断の先頭メッセージと行番号をMod画面へ返却
+- 23 KBを超える通常ソースはPlugin Messageへ流さずVS Code Bridgeの利用を案内
+
+## 2.0.0-alpha.7 — VS Code Auto Deploy
+
+- VS Codeステータスバーへ`ArcSys Auto Deploy: ON/OFF`を追加
+- `ArcSys: Toggle Auto Deploy on Save`コマンドと永続設定を追加
+- ONの間は接続中の通常`.arc`保存を650msデバウンスし、Paperへ自動デプロイ
+- サーバーの検証・Revision競合・権限判定は維持し、失敗時は出力パネルへ理由を表示
+- Core専用編集は設定に依存せず、対象文書だけデプロイと紐付けを自動実行
+- `TRUE_DAMAGE`を含むMonaSpellForgeダメージはクリエイティブ／スペクテイターを最終適用地点で拒否
+
+## 2.0.0-alpha.6 — Core-scoped VS Code Editing
+
+- `ARCSYS_CORE`の右クリックメニューと制御パネルへ`VS Codeで編集`を追加
+- 回路を先にサーバー保存し、対象の回路ID・ノードIDに限定したペアリング情報をFabric BridgeからVS Codeへ通知
+- 既存紐付けがあれば術式を自動で開き、未紐付けなら新規`.arc`を作成
+- 対象文書の`Ctrl+S`でPaper検証・デプロイ・`LATEST`紐付けを順番に自動実行
+- 通常接続や別文書の保存では自動反映せず、失敗時は従来のCore紐付けを維持
+
+## 2.0.0-alpha.5 — Native `.arc` File Transfer
+
+- Fabric回路エディターの`.arc出力`はクリップボードではなく、OSのダウンロードフォルダーへUTF-8の`.arc`ファイルを保存
+- 既存ファイルを上書きせず、同名時は連番を付加
+- `.arc読込`はOS標準のファイル選択画面（Windowsではエクスプローラー）を使用
+- 拡張子と1 MiBの上限を検証し、読込後も所持欠片・回路制限・サーバー検証を維持
+- ファイルI/Oはゲーム描画スレッド外で処理
 
 ## 2.0.0-alpha.4 — ArcSys Project / Source Tooling
 
@@ -11,7 +53,7 @@
 - VS Codeにproject収集と`ArcSys: Profile Current Spell`を追加
 - ノード、配線、座標、parameterを署名付き`.arc`キャリアへ完全可逆化。取込時は所持欠片個体へ安全に再割当て
 - HEALをHP5につき最低200 MPへ再調整し、増幅・POWER込みでも比率を下回らないコンパイラ下限を追加
-- alpha.4は本番未導入
+- alpha.4 Paperは本番導入済み
 
 ## 2.0.0-alpha.3 — ArcSys Magic Language Foundation
 

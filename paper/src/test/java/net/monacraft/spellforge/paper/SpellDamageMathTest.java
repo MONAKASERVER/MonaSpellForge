@@ -1,5 +1,6 @@
 package net.monacraft.spellforge.paper;
 
+import org.bukkit.GameMode;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -15,5 +16,12 @@ class SpellDamageMathTest {
         double fullArmor = DefaultSpellService.armorMultiplier(30, 20, 8);
         double penetratedArmor = DefaultSpellService.armorMultiplier(30, 9, 8);
         assertTrue(penetratedArmor > fullArmor);
+    }
+
+    @Test void creativeAndSpectatorRemainImmuneToPluginDamage() {
+        assertTrue(DefaultSpellService.isDamageImmune(GameMode.CREATIVE));
+        assertTrue(DefaultSpellService.isDamageImmune(GameMode.SPECTATOR));
+        assertFalse(DefaultSpellService.isDamageImmune(GameMode.SURVIVAL));
+        assertFalse(DefaultSpellService.isDamageImmune(GameMode.ADVENTURE));
     }
 }

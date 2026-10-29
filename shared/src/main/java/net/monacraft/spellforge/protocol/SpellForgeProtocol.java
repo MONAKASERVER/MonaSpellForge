@@ -16,7 +16,8 @@ public final class SpellForgeProtocol {
         CIRCUIT_LIBRARY, CIRCUIT_LIBRARY_REQ, CIRCUIT_OPEN_REQ, CIRCUIT_CREATE_REQ, CIRCUIT_DELETE_REQ,
         CIRCUIT_TOGGLE_REQ,
         ARC_REQUEST, ARC_RESPONSE,
-        STOW_NODE_REQ
+        STOW_NODE_REQ,
+        ARC_FILE_IMPORT_REQ, ARC_FILE_IMPORT_RESULT
     }
     public record Frame(Type type, UUID requestId, String sessionToken, UUID circuitId, long baseRevision, String payload) {}
 

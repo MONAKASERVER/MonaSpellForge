@@ -29,7 +29,11 @@ final class CircuitEmbeddingService {
     }
 
     CircuitService.SaveResult save(Player player, Circuit circuit, long expectedRevision) {
-        return saveInternal(player, circuit, expectedRevision, false);
+        // Editors must be able to persist an incomplete circuit as a draft. This is
+        // especially important for ARCSYS_CORE: its server-side binding can only be
+        // configured after the node has a stable, persisted UUID. Activation and
+        // execution still compile the circuit and therefore reject invalid drafts.
+        return saveInternal(player, circuit, expectedRevision, true);
     }
 
     CircuitService.SaveResult stow(Player player, Circuit circuit, long expectedRevision, UUID nodeId) {
@@ -86,6 +90,9 @@ final class CircuitEmbeddingService {
 
         try {
             Circuit saved = database.saveEmbedded(circuit, expectedRevision, newlyEmbedded, returnedNodes);
+            // Invalid drafts are persisted for editing, but must never remain the
+            // active spell after an edit made them incomplete.
+            if (!validation.valid()) database.setCircuitActive(saved.circuitId(), player.getUniqueId(), false);
             removeEmbeddedItems(player, newlyEmbedded);
             return new CircuitService.SaveResult(true, false, "OK", saved);
         } catch (SpellDatabase.OptimisticConflict conflict) {

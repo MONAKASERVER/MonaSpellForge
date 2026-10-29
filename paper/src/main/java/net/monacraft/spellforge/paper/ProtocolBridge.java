@@ -99,6 +99,10 @@ final class ProtocolBridge implements PluginMessageListener, Listener {
                 handleArcRequest(player, frame, token);
                 return;
             }
+            if (frame.type() == SpellForgeProtocol.Type.ARC_FILE_IMPORT_REQ) {
+                handleArcFileImport(player, frame, token);
+                return;
+            }
 
             if (frame.type() == SpellForgeProtocol.Type.CIRCUIT_LIBRARY_REQ) {
                 sendLibrary(player, token, "");
@@ -273,6 +277,27 @@ final class ProtocolBridge implements PluginMessageListener, Listener {
         if (response.ok()) json.add("result", response.result());
         else { com.google.gson.JsonObject error = new com.google.gson.JsonObject(); error.addProperty("code", response.code()); error.addProperty("message", response.message()); json.add("error", error); }
         send(player, new SpellForgeProtocol.Frame(SpellForgeProtocol.Type.ARC_RESPONSE, frame.requestId(), token, null, 0, json.toString()));
+    }
+
+    private void handleArcFileImport(Player player, SpellForgeProtocol.Frame frame, String token) {
+        com.google.gson.JsonObject envelope = new com.google.gson.JsonObject();
+        try {
+            com.google.gson.JsonObject payload = com.google.gson.JsonParser.parseString(frame.payload()).getAsJsonObject();
+            com.google.gson.JsonObject result = arcSys.handle(player, "deploy", payload);
+            envelope.addProperty("ok", true);
+            envelope.add("result", result);
+        } catch (ArcSysService.ArcRequestException rejected) {
+            envelope.addProperty("ok", false);
+            envelope.addProperty("code", rejected.code);
+            envelope.addProperty("message", rejected.getMessage());
+        } catch (Exception rejected) {
+            plugin.getLogger().warning("Rejected ArcSys file import from " + player.getName() + ": " + rejected.getMessage());
+            envelope.addProperty("ok", false);
+            envelope.addProperty("code", "SERVER_REJECTED");
+            envelope.addProperty("message", "サーバーがファイルを安全に拒否しました");
+        }
+        send(player, new SpellForgeProtocol.Frame(SpellForgeProtocol.Type.ARC_FILE_IMPORT_RESULT,
+                frame.requestId(), token, null, 0, envelope.toString()));
     }
 
     private record JsonObjectResponse(boolean ok, com.google.gson.JsonObject result, String code, String message) { }

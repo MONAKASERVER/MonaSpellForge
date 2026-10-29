@@ -31,24 +31,31 @@ final class ArcSysDeveloperBridge extends WebSocketServer {
     private final Minecraft minecraft;
     private final String paperSession;
     private final String pairingCode;
+    private final CoreTarget coreTarget;
     private final long expiresAt;
     private volatile WebSocket authenticated;
     private volatile long windowSecond;
     private volatile int messagesThisSecond;
 
-    private ArcSysDeveloperBridge(Minecraft minecraft, String paperSession, String pairingCode) {
+    private ArcSysDeveloperBridge(Minecraft minecraft, String paperSession, String pairingCode, CoreTarget coreTarget) {
         super(new InetSocketAddress("127.0.0.1", PORT));
         this.minecraft = minecraft;
         this.paperSession = paperSession;
         this.pairingCode = pairingCode;
+        this.coreTarget = coreTarget;
         this.expiresAt = System.currentTimeMillis() + PAIRING_TTL_MILLIS;
         setConnectionLostTimeout(15);
     }
 
     static synchronized String start(Minecraft minecraft, String paperSession) {
+        return start(minecraft, paperSession, null, null);
+    }
+
+    static synchronized String start(Minecraft minecraft, String paperSession, UUID circuitId, UUID nodeId) {
         stopBridge();
         String code = "%06d".formatted(RANDOM.nextInt(1_000_000));
-        ArcSysDeveloperBridge bridge = new ArcSysDeveloperBridge(minecraft, paperSession, code);
+        CoreTarget target = circuitId == null || nodeId == null ? null : new CoreTarget(circuitId, nodeId);
+        ArcSysDeveloperBridge bridge = new ArcSysDeveloperBridge(minecraft, paperSession, code, target);
         try {
             bridge.start();
             instance = bridge;
@@ -93,6 +100,13 @@ final class ArcSysDeveloperBridge extends WebSocketServer {
                 }
                 authenticated = connection;
                 JsonObject result = new JsonObject(); result.addProperty("minecraftConnected", true); result.addProperty("at", Instant.now().toString());
+                if (coreTarget != null) {
+                    JsonObject target = new JsonObject();
+                    target.addProperty("circuitId", coreTarget.circuitId().toString());
+                    target.addProperty("nodeId", coreTarget.nodeId().toString());
+                    target.addProperty("autoDeployOnSave", true);
+                    result.add("coreTarget", target);
+                }
                 sendOk(connection, idText, result); return;
             }
             if (connection != authenticated) { connection.close(1008, "another client is paired"); return; }
@@ -143,4 +157,6 @@ final class ArcSysDeveloperBridge extends WebSocketServer {
     }
     @Override public void onError(WebSocket connection, Exception error) { }
     @Override public void onStart() { }
+
+    private record CoreTarget(UUID circuitId, UUID nodeId) { }
 }

@@ -91,7 +91,7 @@ final class SpellLibraryScreen extends Screen {
                 .bounds(x + (buttonWidth + gap) * 3, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.literal("更新"), ignored -> requestRefresh())
                 .bounds(x + (buttonWidth + gap) * 4, y, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("VS Code"), ignored -> openDeveloperBridge())
+        addRenderableWidget(Button.builder(Component.literal("VS Code接続"), ignored -> openDeveloperBridge())
                 .bounds(x + (buttonWidth + gap) * 5, y, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.literal("閉じる"), ignored -> onClose())
                 .bounds(x + (buttonWidth + gap) * 6, y, buttonWidth, 20).build());
@@ -147,7 +147,13 @@ final class SpellLibraryScreen extends Screen {
 
     private void openDeveloperBridge() {
         String code = ArcSysDeveloperBridge.start(minecraft, token);
-        status = Component.literal("VS Codeペアリングコード: " + code + "（10分間有効・一度だけ使用）");
+        if (code.equals("起動失敗")) {
+            status = Component.literal("VS Code Bridgeを起動できませんでした");
+            statusColor = ERROR;
+            return;
+        }
+        minecraft.keyboardHandler.setClipboard(code);
+        status = Component.literal("接続コード " + code + " をコピーしました — VS Codeで「ArcSys: かんたんスタート」");
         statusColor = SUCCESS;
     }
 

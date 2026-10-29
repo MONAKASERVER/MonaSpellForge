@@ -47,7 +47,9 @@ public final class MonaSpellForgePlugin extends JavaPlugin {
                     getConfig().getLong("hud.update-interval-ticks", 10), getConfig().getDouble("hud.vanilla-health-scale", 20.0));
             arcRuntime = new ArcRuntimeService(this, database, fragments, mana);
             ArcCoreService arcCores = new ArcCoreService(this, database, arcRuntime, mana);
-            spells = new DefaultSpellService(this,database,compiler,mana,new TickBudgetManager(getConfig().getDouble("runtime.minimum-tps",17),getConfig().getInt("runtime.max-runtime-cost",512)),arcCores);
+            McMmoExperienceGuard mcMmoExperience = new McMmoExperienceGuard(this);
+            mcMmoExperience.register();
+            spells = new DefaultSpellService(this,database,compiler,mana,new TickBudgetManager(getConfig().getDouble("runtime.minimum-tps",17),getConfig().getInt("runtime.max-runtime-cost",512)),arcCores,mcMmoExperience);
             editor = new EditorGui(fragments,circuits,embedding,spells,database);
             UpgradeService upgrades = new UpgradeService(this,fragments,database);
             ArcSysService arcSys = new ArcSysService(database, fragments, arcCores);

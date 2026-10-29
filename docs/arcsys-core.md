@@ -12,6 +12,7 @@ No VS Code client can contact Paper directly. Core operations use the existing r
 
 - Fabric: save the circuit, right-click the core node, then choose `ArcSys制御パネル`.
 - VS Code: deploy the current `.arc`, then run `ArcSys: Bind Program to Core`.
+- Direct edit: right-click the Core in the Fabric editor, choose `VS Codeで編集`, pair VS Code, then save the opened `.arc`; validation, deployment and `LATEST` binding are performed automatically for that Core only.
 - No Mod / Bedrock: use `/msf arc core list` followed by the bind, inspect or unbind subcommand shown by command help.
 - `PINNED` fixes one immutable revision. `LATEST` resolves the latest verified revision once at execution start.
 
@@ -37,6 +38,6 @@ Live Paper/Fabric/Geyser validation remains a separate manual gate; a successful
 
 The Fabric editor's `ノードをしまう` action uses a dedicated atomic server operation. It can return a node even when removing that node temporarily makes the draft circuit incomplete. The server still validates ownership, revision, fragment identity and storage limits.
 
-Node circuits can be exported as `.arc` text to the clipboard and imported back into the Mod editor. The embedded graph snapshot includes node types, levels, parameters, positions and typed edges. Fragment instance UUIDs are deliberately excluded; import allocates matching fragments from the player's current circuit/palette so an exported file cannot forge ownership.
+Node circuits are exported as `.arc` files into the operating system's Downloads folder. Import opens the native file picker (Explorer on Windows) and accepts `.arc` files up to 1 MiB. The embedded graph snapshot includes node types, levels, parameters, positions and typed edges. Fragment instance UUIDs are deliberately excluded; import allocates matching fragments from the player's current circuit/palette so an exported file cannot forge ownership.
 
 Neutral magic stones are bearer-transferable. The first valid use after a handoff atomically moves ledger custody and re-signs the physical item. A copied item with the previous owner/signature becomes stale as soon as custody moves and is rejected.

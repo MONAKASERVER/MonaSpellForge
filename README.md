@@ -1,6 +1,10 @@
 # MonaSpellForge
 
-Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.4ではArcSysへユーザー定義`struct / enum`、複数module/import、ソースマップ、ArcVMプロファイラー、可逆な`.arc`―ノード回路変換を追加しました。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
+ArcSysの包括的な日本語ドキュメント: [ArcSys 2.0 完全Wiki](docs/ARCSYS_COMPLETE_WIKI_JA.md)
+
+ArcSys CLIの導入・コマンド・出力形式・CI利用: [ArcSys CLI 完全Wiki](docs/ARCSYS_CLI_COMPLETE_WIKI_JA.md)
+
+Paper 26.1.2 + Fabric 26.1.2 向けの、サーバー権威型魔術回路システムです。2.0.0-alpha.12ではARCSYS_COREへかんたん／アドバンスド表示を追加し、VS Codeなしで使えるMod内ArcSysコードエディターを実装しました。既存72種類と73番目の `ARCSYS_CORE` は維持されます。
 
 v1.7.0ではFabricエディター下部に攻撃力・DPS・連射力・消費魔力のリアルタイム戦闘指標を追加しました。新しい術式強化として、低負荷で防御を15～55%貫通する `ARMOR_PENETRATION` と、莫大な魔力・実行負荷を使って確定ダメージを与える `TRUE_DAMAGE` を追加しています。
 
@@ -15,8 +19,8 @@ $env:JAVA_HOME='C:\path\to\jdk-25'
 
 成果物:
 
-- `paper/build/libs/MonaSpellForge-Paper-1.6.1.jar`
-- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-1.6.1.jar`
+- `paper/build/libs/MonaSpellForge-Paper-2.0.0-alpha.12.jar`
+- `fabric/build/libs/MonaSpellForge-Fabric-26.1.2-2.0.0-alpha.12.jar`
 
 Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアントの`mods`へ配置します。ModがないJava版・統合版は54スロットのサーバーGUIを利用できます。
 
@@ -24,7 +28,7 @@ Paper JARをサーバーの`plugins`へ、Fabric JARを各Javaクライアント
 
 [GitHub Releases](https://github.com/MONAKASERVER/MonaSpellForge/releases)から、利用中のMinecraftバージョンに対応する`MonaSpellForge-Fabric-*.jar`をダウンロードし、クライアントの`mods`フォルダへ配置してください。
 
-v1.6.1の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。サーバー側には互換性のあるMonaSpellForge Paperプラグインが必要です。
+2.0.0-alpha.12の動作対象はMinecraft 26.1.2、Fabric Loader 0.19.4以降、Java 25です。PaperとFabricは同じMonaSpellForgeバージョンを使用してください。
 
 Java版・統合版共通のWebエディターは、ゲーム内で `/msf web` を実行して発行される6桁コードで連携します。コードは10分間・1回限り有効で、保存処理はPaper側でも所有権、所持ノード、Revision、回路上限を再検証します。
 
@@ -35,6 +39,13 @@ Java版・統合版共通のWebエディターは、ゲーム内で `/msf web` �
 - 色付きポートを左ドラッグ: 型が一致するポートへ自由配線
 - 配線を右クリック: その配線だけを切断
 - ノードまたはキャンバスを右クリック: 追加・複製・しまうメニュー
+- `.arc出力`: 回路をダウンロードフォルダーへ`.arc`ファイルとして保存（同名時は連番）
+- `.arc読込`: エクスプローラーからファイルを選択。MonaSpellForgeのノード回路は画面へ復元し、通常のArcSysソースはPaperで再コンパイル・検証して保存済み術式へ取り込み
+- `ARCSYS_CORE`を右クリックして「VS Codeで編集」: そのCore専用のペアリングを開始。VS Codeで開かれた`.arc`を保存すると、検証・デプロイ・`LATEST`紐付けを自動実行
+- `ARCSYS_CORE`を右クリックして「Mod内でコード編集」: VS CodeなしでArcSysを編集。Tabインデント、検索、元に戻す、自動下書き保存、Paper検証、保存・Core反映に対応
+- VS Codeの`ArcSys Auto Deploy`をON: 通常の`.arc`も保存時にMinecraftへ自動デプロイ（初期OFF・Coreへの自動紐付けは専用編集時のみ）
+- かんたん接続: Minecraftの「VS Code接続」でコードを自動コピーし、VS CodeのステータスバーまたはArcSys Studioから「かんたんスタート」を選択
+- 初回テンプレート: 単体攻撃・範囲攻撃・空の術式を選ぶと、その場でPaperへデプロイし、以後は`Ctrl+S`だけで更新
 - マウスホイール: ズームイン・アウト
 - 空白部分を左ドラッグ、または中クリックドラッグ: キャンバス全体を移動
 - `Ctrl+Z` / `Ctrl+Y`: 元に戻す / やり直す
