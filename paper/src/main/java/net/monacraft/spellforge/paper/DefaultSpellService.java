@@ -31,15 +31,17 @@ final class DefaultSpellService implements SpellService {
     private final ManaService mana;
     private final TickBudgetManager budgets;
     private final ArcCoreService arcCores;
+    private final McMmoExperienceGuard mcMmoExperience;
     private final SpellParticleRenderer particles;
     private final Map<UUID, Set<UUID>> active = new ConcurrentHashMap<>();
     private final Map<UUID, Set<BukkitTask>> scheduled = new ConcurrentHashMap<>();
     private final Map<String, Double> memory = new ConcurrentHashMap<>();
 
     DefaultSpellService(Plugin plugin, SpellDatabase database, CircuitCompiler compiler, ManaService mana,
-                        TickBudgetManager budgets, ArcCoreService arcCores) {
+                        TickBudgetManager budgets, ArcCoreService arcCores, McMmoExperienceGuard mcMmoExperience) {
         this.plugin = plugin; this.database = database; this.compiler = compiler; this.mana = mana; this.budgets = budgets;
         this.arcCores = arcCores;
+        this.mcMmoExperience = mcMmoExperience;
         this.particles = new SpellParticleRenderer(plugin.getConfig());
     }
 
@@ -250,7 +252,7 @@ final class DefaultSpellService implements SpellService {
         if (node(spell, "TRUE_DAMAGE") != null) {
             DamageSource source = DamageSource.builder(DamageType.GENERIC_KILL)
                     .withCausingEntity(caster).withDirectEntity(caster).build();
-            target.damage(damage, source);
+            mcMmoExperience.runWithoutExperience(caster, () -> target.damage(damage, source));
             return;
         }
         CircuitNode penetrationNode = node(spell, "ARMOR_PENETRATION");
