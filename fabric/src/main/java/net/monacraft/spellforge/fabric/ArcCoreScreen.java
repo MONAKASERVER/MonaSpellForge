@@ -36,7 +36,7 @@ final class ArcCoreScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("プログラム検証"), b -> request("validateCoreBinding", object())).bounds(cx - w - 4, y + 170, w, 20).build());
         addRenderableWidget(Button.builder(Component.literal("実行ログ"), b -> request("logs", new JsonObject())).bounds(cx + 4, y + 170, w, 20).build());
         addRenderableWidget(Button.builder(Component.literal("シミュレーション"), b -> request("simulateCore", object())).bounds(cx - w - 4, y + 196, w, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("VS Codeで編集"), b -> openVsCode()).bounds(cx + 4, y + 196, w, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("VS Codeかんたん編集"), b -> openVsCode()).bounds(cx + 4, y + 196, w, 20).build());
         addRenderableWidget(Button.builder(Component.literal("再読込"), b -> { request("listSpells", new JsonObject()); request("inspectCore", object()); }).bounds(cx - w - 4, y + 222, w, 20).build());
         addRenderableWidget(Button.builder(Component.literal("閉じる"), b -> onClose()).bounds(cx + 4, y + 222, w, 20).build());
         request("listSpells", new JsonObject()); request("inspectCore", object());
@@ -89,8 +89,12 @@ final class ArcCoreScreen extends Screen {
     private void bind() { if (spells.isEmpty()) { lastResult = "プログラムがありません"; return; } SpellChoice spell = spells.get(selected); JsonObject payload = object(); payload.addProperty("spellId", spell.id); payload.addProperty("revision", spell.revision); payload.addProperty("mode", mode); request("bindCore", payload); }
     private void openVsCode() {
         String code = ArcSysDeveloperBridge.start(minecraft, token, circuitId, nodeId);
-        lastResult = code.equals("起動失敗") ? "VS Code Bridgeを起動できませんでした"
-                : "ペアリングコード: " + code + " — VS Codeで保存するとこのCoreへ自動反映します";
+        if (code.equals("起動失敗")) {
+            lastResult = "VS Code Bridgeを起動できませんでした";
+            return;
+        }
+        minecraft.keyboardHandler.setClipboard(code);
+        lastResult = "コードをコピーしました — VS Codeの「ArcSys: かんたんスタート」で接続してください";
     }
     private JsonObject object() { JsonObject object = new JsonObject(); object.addProperty("circuitId", circuitId.toString()); object.addProperty("nodeId", nodeId.toString()); return object; }
     private void request(String type, JsonObject payload) { UUID id = UUID.randomUUID(); pending.put(id, type); JsonObject request = new JsonObject(); request.addProperty("version", 1); request.addProperty("id", id.toString()); request.addProperty("type", type); request.add("payload", payload); MonaSpellForgeClient.send(new SpellForgeProtocol.Frame(SpellForgeProtocol.Type.ARC_REQUEST, id, token, circuitId, 0, request.toString())); }

@@ -195,7 +195,8 @@ public final class SpellForgeScreen extends Screen {
                     String code = ArcSysDeveloperBridge.start(minecraft, token, circuit.circuitId(), targetNode);
                     if (code.equals("起動失敗")) setError("VS Code Bridgeを起動できませんでした");
                     else {
-                        status = Component.literal("VS Codeコード: " + code + " — 保存すると選択中のCoreへ自動反映");
+                        minecraft.keyboardHandler.setClipboard(code);
+                        status = Component.literal("VS Codeコードをコピーしました — 「ArcSys: かんたんスタート」で接続");
                         statusColor = CONNECTED;
                     }
                 }

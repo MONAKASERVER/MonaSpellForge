@@ -3,3 +3,5 @@ tsconfig.json
 node_modules/@types/**
 node_modules/typescript/**
 **/*.map
+out/test/**
+tsconfig.tsbuildinfo

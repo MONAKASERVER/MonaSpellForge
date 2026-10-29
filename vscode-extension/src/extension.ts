@@ -4,6 +4,7 @@ import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } f
 import { FabricBridge } from './bridge';
 import { StudioProvider } from './studio';
 import { CoreEditorTarget, StudioSnapshot } from './protocol';
+import { extractPairingCode, STARTER_TEMPLATES } from './quickstart';
 
 let client: LanguageClient | undefined;
 let bridge: FabricBridge | undefined;
@@ -24,6 +25,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await client.start();
 
   const studio = new StudioProvider();
+  const connectionStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 91);
+  connectionStatus.command = 'arcsys.quickStart';
+  const refreshConnectionStatus = () => {
+    connectionStatus.text = bridge?.connected ? '$(vm-active) ArcSys: Minecraft接続中' : '$(plug) ArcSys: かんたん接続';
+    connectionStatus.tooltip = bridge?.connected ? 'Minecraftとの接続を確認済み' : 'Minecraft側でVS Code接続を押してからクリック';
+    connectionStatus.show();
+  };
   const autoDeployStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
   autoDeployStatus.command = 'arcsys.toggleAutoDeploy';
   const refreshAutoDeployStatus = () => {
@@ -32,7 +40,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     autoDeployStatus.tooltip = enabled ? '通常の.arc保存をMinecraftへ自動デプロイします' : 'クリックして通常の.arc自動デプロイを有効化';
     autoDeployStatus.show();
   };
-  context.subscriptions.push(vscode.window.registerTreeDataProvider('arcsys.studio', studio), output, autoDeployStatus);
+  context.subscriptions.push(vscode.window.registerTreeDataProvider('arcsys.studio', studio), output, connectionStatus, autoDeployStatus);
   const register = (name: string, handler: () => unknown) => context.subscriptions.push(vscode.commands.registerCommand(name, handler));
   register('arcsys.toggleAutoDeploy', async () => {
     const config = vscode.workspace.getConfiguration('arcsys');
@@ -45,24 +53,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (event.affectsConfiguration('arcsys.autoDeployOnSave')) refreshAutoDeployStatus();
   }));
   refreshAutoDeployStatus();
+  refreshConnectionStatus();
 
-  register('arcsys.connect', async () => {
-    const token = await vscode.window.showInputBox({ title: 'ArcSys ペアリング', prompt: 'MinecraftのArcSys画面に表示された6桁コード', password: true, validateInput: v => /^\d{6}$/.test(v) ? undefined : '6桁の数字を入力してください' });
-    if (!token) return;
-    const config = vscode.workspace.getConfiguration('arcsys.bridge');
-    bridge = new FabricBridge(config.get('port', 27128), config.get('timeoutMs', 8000));
-    await run('接続', async () => {
-      const hello = await bridge!.connect(token);
-      await refreshStudio(studio);
-      if (hello.coreTarget?.autoDeployOnSave) await openCoreEditorSession(hello.coreTarget);
-      return hello.coreTarget ? 'Minecraftへ接続しました。このファイルを保存すると選択中のCoreへ自動反映されます' : 'Minecraftへ接続しました';
-    });
-  });
+  register('arcsys.connect', () => connectToMinecraft(false));
+  register('arcsys.quickStart', () => connectToMinecraft(true));
+  register('arcsys.createStarter', () => createStarterSpell());
   register('arcsys.disconnect', () => {
     bridge?.disconnect(); bridge = undefined; autoCoreSession = undefined;
     for (const timer of generalDeployTimers.values()) clearTimeout(timer);
     generalDeployTimers.clear();
-    studio.update(); vscode.window.showInformationMessage('ArcSysを切断しました');
+    studio.update(); refreshConnectionStatus(); vscode.window.showInformationMessage('ArcSysを切断しました');
   });
   register('arcsys.validate', () => sourceRequest('validate'));
   register('arcsys.compile', () => sourceRequest('compile'));
@@ -117,15 +117,105 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       spellId: metadata.spellId, revision: metadata.revision, mode });
     showCoreResult('bind', bound); await refreshStudio(studio);
   });
-  register('arcsys.openSpell', async () => {
+  register('arcsys.openSpell', () => openServerSpell());
+
+  async function openServerSpell(): Promise<boolean> {
     const result = await requireBridge().request('listSpells', {}) as { spells?: Array<{ id: string; name: string }> };
+    if (!result.spells?.length) {
+      vscode.window.showInformationMessage('保存済み術式がありません。テンプレートから最初の魔術を作れます');
+      return false;
+    }
     const selected = await vscode.window.showQuickPick((result.spells ?? []).map(s => ({ label: s.name, id: s.id })), { title: 'Minecraftから開く魔術' });
-    if (!selected) return;
+    if (!selected) return false;
     const opened = await requireBridge().request('openSpell', { spellId: selected.id }) as { source: string; revision: number };
     const document = await vscode.workspace.openTextDocument({ language: 'arcsys', content: opened.source });
     setSpellMetadata(document, { spellId: selected.id, revision: opened.revision });
     await vscode.window.showTextDocument(document);
-  });
+    return true;
+  }
+
+  async function connectToMinecraft(quickStart: boolean): Promise<void> {
+    if (quickStart && bridge?.connected) {
+      await showQuickStartMenu();
+      return;
+    }
+    const copied = extractPairingCode(await vscode.env.clipboard.readText());
+    const token = quickStart && copied ? copied : await vscode.window.showInputBox({
+      title: quickStart ? 'ArcSys かんたんスタート' : 'ArcSys ペアリング',
+      prompt: copied ? 'Minecraftからコピーしたコードを確認してください' : 'MinecraftのVS Code接続画面に表示された6桁コード',
+      value: copied ?? '', password: true,
+      validateInput: value => /^\d{6}$/.test(value) ? undefined : '6桁の数字を入力してください'
+    });
+    if (!token) return;
+    const config = vscode.workspace.getConfiguration('arcsys.bridge');
+    const candidate = new FabricBridge(config.get('port', 27128), config.get('timeoutMs', 8000));
+    bridge?.disconnect();
+    bridge = candidate;
+    try {
+      const hello = await candidate.connect(token);
+      refreshConnectionStatus();
+      await refreshStudio(studio);
+      if (hello.coreTarget?.autoDeployOnSave) {
+        await openCoreEditorSession(hello.coreTarget);
+        return;
+      }
+      if (quickStart) {
+        const deployConfig = vscode.workspace.getConfiguration('arcsys');
+        await deployConfig.update('autoDeployOnSave', true, vscode.ConfigurationTarget.Global);
+        refreshAutoDeployStatus();
+        await showQuickStartMenu();
+      } else {
+        vscode.window.showInformationMessage('Minecraftへ接続しました');
+      }
+    } catch (error) {
+      candidate.disconnect();
+      if (bridge === candidate) bridge = undefined;
+      studio.update(); refreshConnectionStatus();
+      const message = error instanceof Error ? error.message : String(error);
+      output.appendLine(`接続: ${message}`);
+      vscode.window.showErrorMessage(`ArcSys 接続失敗: ${message}`);
+    }
+  }
+
+  async function showQuickStartMenu(): Promise<void> {
+    const activeArc = vscode.window.activeTextEditor?.document.languageId === 'arcsys';
+    const choices = [
+      { label: '$(sparkle) テンプレートから新しい魔術を作る', action: 'create' },
+      { label: '$(cloud-download) Minecraftの保存済み魔術を開く', action: 'open' },
+      ...(activeArc ? [{ label: '$(cloud-upload) 今開いている.arcをすぐデプロイ', action: 'deploy' }] : [])
+    ];
+    const selected = await vscode.window.showQuickPick(choices, {
+      title: 'Minecraftへ接続しました — 次にすること', placeHolder: '選ぶだけで開始できます'
+    });
+    if (!selected) {
+      vscode.window.showInformationMessage('ArcSys接続完了。保存時Auto DeployをONにしました');
+      return;
+    }
+    if (selected.action === 'open') {
+      if (!await openServerSpell()) await createStarterSpell();
+    } else if (selected.action === 'deploy') {
+      await sourceRequest('deploy');
+    } else await createStarterSpell();
+  }
+
+  async function createStarterSpell(): Promise<void> {
+    if (!bridge?.connected) {
+      await connectToMinecraft(true);
+      return;
+    }
+    const template = await vscode.window.showQuickPick(STARTER_TEMPLATES.map(value => ({
+      label: value.label, description: value.description, value
+    })), { title: '最初の魔術を選択' });
+    if (!template) return;
+    const document = await vscode.workspace.openTextDocument({ language: 'arcsys', content: template.value.source });
+    await vscode.window.showTextDocument(document);
+    const deployConfig = vscode.workspace.getConfiguration('arcsys');
+    if (!deployConfig.get('autoDeployOnSave', false))
+      await deployConfig.update('autoDeployOnSave', true, vscode.ConfigurationTarget.Global);
+    refreshAutoDeployStatus();
+    const deployed = await generalAutoDeploy(document, document.getText(), studio);
+    if (deployed) vscode.window.showInformationMessage('最初の魔術を作成しました。Ctrl+Sで保存すると以後もMinecraftへ自動反映されます');
+  }
 
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
     if (document.languageId !== 'arcsys') return;
@@ -209,9 +299,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }, 650));
   }
 
-  async function generalAutoDeploy(document: vscode.TextDocument, source: string, provider: StudioProvider): Promise<void> {
+  async function generalAutoDeploy(document: vscode.TextDocument, source: string, provider: StudioProvider): Promise<boolean> {
     try {
-      if (!bridge?.connected || !vscode.workspace.getConfiguration('arcsys').get('autoDeployOnSave', false)) return;
+      if (!bridge?.connected || !vscode.workspace.getConfiguration('arcsys').get('autoDeployOnSave', false)) return false;
       const metadata = getSpellMetadata(document);
       const result = await requireBridge().request('deploy', {
         ...(await projectPayload(document, source)), uri: document.uri.toString(), explicit: true,
@@ -223,11 +313,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       output.show(true);
       await refreshStudio(provider);
       vscode.window.setStatusBarMessage(`$(cloud-upload) ArcSys Revision ${result.revision} を自動デプロイしました`, 4000);
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       output.appendLine(`[${new Date().toISOString()}] auto-deploy failed ${document.fileName}\n${message}`);
       output.show(true);
       vscode.window.showErrorMessage(`ArcSys Auto Deploy失敗: ${message}`);
+      return false;
     }
   }
 
@@ -298,10 +390,6 @@ function getSpellMetadata(document: vscode.TextDocument): { spellId: string; rev
   return spellDocumentMetadata.get(document) ?? spellMetadata.get(document.uri.toString());
 }
 async function refreshStudio(studio: StudioProvider): Promise<void> { studio.update(await requireBridge().request('studioSnapshot', {}) as StudioSnapshot); }
-async function run(label: string, action: () => Promise<string>): Promise<void> {
-  try { vscode.window.showInformationMessage(await action()); }
-  catch (error) { const message = error instanceof Error ? error.message : String(error); output.appendLine(`${label}: ${message}`); vscode.window.showErrorMessage(`ArcSys ${label}失敗: ${message}`); }
-}
 
 function showDebugResult(action: string, result: unknown): void {
   output.appendLine(`[${new Date().toISOString()}] debug:${action}\n${JSON.stringify(result, null, 2)}`);

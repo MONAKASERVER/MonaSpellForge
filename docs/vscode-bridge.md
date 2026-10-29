@@ -9,6 +9,16 @@
 5. Select **VS Code** in the spell library. This is the Minecraft-side approval action.
 6. Run **ArcSys: Connect to Minecraft** and enter the displayed six-digit, single-use code.
 
+## Easy start (alpha.11+)
+
+1. In Minecraft, click **VS Code接続** or **VS Codeかんたん編集**. The six-digit code is copied to the system clipboard automatically.
+2. In VS Code, click **ArcSys: かんたん接続** in the status bar or **かんたんスタート** in ArcSys Studio.
+3. The extension reads the exact six-digit clipboard value and connects without manual retyping.
+4. Choose a starter template, a saved Minecraft spell, or the currently open `.arc` file.
+5. Quick Start enables save-time deployment. A starter template is deployed immediately, and subsequent `Ctrl+S` saves update it through Fabric and Paper.
+
+The one-use code, ten-minute expiry, loopback-only listener, Fabric session requirement and Paper-side validation are unchanged. Clipboard text is accepted only when it consists of exactly six digits.
+
 The bridge listens only on `127.0.0.1:27128`. It is closed on Minecraft disconnect, the code expires after ten minutes, and only one VS Code client can pair. VS Code never opens a connection to Paper; every request traverses the logged-in Fabric custom-payload session.
 
 ## Commands

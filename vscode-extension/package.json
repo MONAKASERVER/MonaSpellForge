@@ -2,7 +2,7 @@
   "name": "arcsys-vscode",
   "displayName": "ArcSys 2.0 — Magic Engine",
   "description": "MonaSpellForge ArcSys language tools and authenticated Fabric bridge",
-  "version": "2.0.0-alpha.9",
+  "version": "2.0.0-alpha.11",
   "publisher": "monaka-server",
   "repository": { "type": "git", "url": "https://github.com/MONAKASERVER/MonaSpellForge.git" },
   "license": "MIT",
@@ -23,6 +23,8 @@
       "path": "./syntaxes/arcsys.tmLanguage.json"
     }],
     "commands": [
+      { "command": "arcsys.quickStart", "title": "ArcSys: かんたんスタート" },
+      { "command": "arcsys.createStarter", "title": "ArcSys: テンプレートから魔術を作る" },
       { "command": "arcsys.connect", "title": "ArcSys: Connect to Minecraft" },
       { "command": "arcsys.openSpell", "title": "ArcSys: Open Spell from Minecraft" },
       { "command": "arcsys.compile", "title": "ArcSys: Compile Current Spell" },
