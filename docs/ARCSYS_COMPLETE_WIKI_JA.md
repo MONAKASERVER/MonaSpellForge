@@ -1,6 +1,6 @@
 # ArcSys 2.0 完全Wiki
 
-> 対象: MonaSpellForge `2.0.0-alpha.9`
+> 対象: MonaSpellForge `2.0.0-alpha.12`
 >
 > Minecraft: Paper / Fabric 26.1.2、Java 25
 >
@@ -82,7 +82,7 @@ ArcVMはBukkit APIを直接操作しません。VMが生成するのは「ダメ
 | `arcsys-vm` | 検証済みバイトコードの制限付き実行、継続、並列、プロファイル |
 | `arcsys-cli` | オフライン検査、コンパイル、逆アセンブル |
 | Paperプラグイン | 所有権、Revision、DB、MP、保護、Minecraft効果の最終判断 |
-| Fabric Mod | 回路GUI、`.arc`入出力、VS Codeとのlocalhost Bridge |
+| Fabric Mod | 回路GUI、Mod内ArcSysコードエディター、`.arc`入出力、VS Codeとのlocalhost Bridge |
 | VS Code拡張 | ハイライト、補完、Hover、検証、Deploy、デバッグ、ArcSys Studio |
 
 ### 1.3 信頼境界
@@ -98,12 +98,12 @@ ArcVMはBukkit APIを直接操作しません。VMが生成するのは「ダメ
 
 ### 2.1 プレイヤー環境
 
-| 環境 | 回路編集 | ArcSys術式実行 | VS Codeライブ連携 |
-|---|---:|---:|---:|
-| Java + Fabric Mod | 対応 | 対応 | 対応 |
-| Javaバニラ | サーバーGUI / Web | 対応 | 非対応 |
-| 統合版 + Geyser/Floodgate | サーバーGUI / Web | 対応 | 非対応 |
-| VS Codeのみ | ローカル編集 | サーバー実行不可 | 非対応 |
+| 環境 | 回路編集 | Mod内コード編集 | ArcSys術式実行 | VS Codeライブ連携 |
+|---|---:|---:|---:|---:|
+| Java + Fabric Mod | 対応 | 対応 | 対応 | 対応 |
+| Javaバニラ | サーバーGUI / Web | 非対応 | 対応 | 非対応 |
+| 統合版 + Geyser/Floodgate | サーバーGUI / Web | 非対応 | 対応 | 非対応 |
+| VS Codeのみ | ローカル編集 | 非対応 | サーバー実行不可 | 非対応 |
 
 ### 2.2 VS Code連携に必要なもの
 
@@ -111,14 +111,28 @@ ArcVMはBukkit APIを直接操作しません。VMが生成するのは「ダメ
 2. VS Codeへ`ArcSys 2.0 — Magic Engine` VSIXを導入します。
 3. Fabricでサーバーへログインします。
 4. `/msf open`を実行します。
-5. ライブラリ画面のVS Codeボタン、またはARCSYS_COREの`VS Codeで編集`を選択します。
-6. Minecraftに表示された6桁コードを、VS Codeの`ArcSys: Connect to Minecraft`へ入力します。
+5. ライブラリ画面の`VS Code接続`、またはARCSYS_COREの`VS Codeで編集`を選択します。
+6. 6桁コードがクリップボードへ自動コピーされます。
+7. VS Codeのステータスバーで`ArcSys: かんたん接続`、またはArcSys Studioで`かんたんスタート`を選択します。
+8. テンプレート、保存済み術式、現在開いている`.arc`のいずれかを選びます。
 
 Bridgeは`127.0.0.1:27128`だけで待受します。コードは10分で失効し、Minecraftから切断するとセッションも失効します。
 
-### 2.3 バージョンを揃える
+### 2.3 Mod内コードエディターに必要なもの
 
-PaperとFabricのプロトコル項目は追加されることがあります。特に`.arc`読込とCore設定経路はalpha.9で修正されているため、PaperとFabricを同じバージョンへ揃えてください。
+VS Codeを使わずに編集する場合は、サーバーと同じ版のFabric Modだけが必要です。
+
+1. `/msf open`で回路を開きます。
+2. `ARCSYS_CORE`を配置して回路を保存します。
+3. Coreを右クリックして`Mod内でコード編集`を選びます。
+4. コードを編集し、`Ctrl+Enter`で検証します。
+5. `Ctrl+S`でPaperへ保存し、そのCoreへ`LATEST`で反映します。
+
+コンパイル、所有権、Capability、必要欠片、RevisionはPaper側で再検証されます。Mod内で表示された成功結果だけを信用してサーバー検証を省略することはありません。
+
+### 2.4 バージョンを揃える
+
+PaperとFabricのプロトコル項目は追加されることがあります。Mod内コードエディターはalpha.12で追加されたため、PaperとFabricを同じalpha.12へ揃えてください。
 
 ---
 
@@ -153,7 +167,15 @@ spell FirstStrike {
 }
 ```
 
-### 3.3 Deployと発動
+### 3.3 Mod内エディターからDeploy
+
+1. ARCSYS_COREを右クリックし、`Mod内でコード編集`を開きます。
+2. 上のコードを入力します。
+3. `Ctrl+Enter`でPaper側検証を実行します。
+4. エラーがなければ`Ctrl+S`で保存・Deploy・Core紐付けを実行します。
+5. 回路のTriggerからCoreの`exec_in`へEXEC配線し、回路を発動します。
+
+### 3.4 VS CodeからDeployと単体発動
 
 1. VS Codeで`.arc`を開きます。
 2. Minecraftとペアリングします。
@@ -1053,15 +1075,89 @@ Coreは回路内に置くだけでは実行されません。Triggerから`EXEC`
 
 1. 回路へARCSYS_COREを配置します。
 2. Coreを右クリックします。
-3. `VS Codeで編集`または`ArcSys制御パネル`を選びます。
-4. alpha.9以降は回路が自動保存され、保存成功後だけ次の画面へ進みます。
-5. 術式とRevision modeを設定します。
+3. 次のいずれかを選びます。
+
+| 操作 | 用途 |
+|---|---|
+| `Mod内でコード編集` | Minecraft内でArcSysを書き、検証・保存・Core反映まで行う |
+| `VS Codeで編集` | VS Codeの補完・LSP・デバッグを使って編集する |
+| `ArcSys制御パネル` | 保存済み術式、Revision mode、検証、ログ、シミュレーションを管理する |
+
+各編集画面を開く前に回路が自動保存されます。保存に失敗した場合は編集画面へ進みません。
 
 `VS Codeで編集`では、その文書の保存時にDeployと`LATEST`紐付けが自動実行されます。
 
+`Mod内でコード編集`では、`Ctrl+S`を押すとPaperで検証・Deployしたあと、同じCoreへ`LATEST`で紐付けます。検証または権限確認に失敗した場合、現在のCore紐付けは変更されません。
+
 発動条件や魔術形状がまだ不足している回路も、編集用の下書きとして保存できます。下書きは自動的に無効化され、検証に合格するまで有効化・実行できません。
 
-### 18.5 コマンドで紐付ける
+### 18.5 Core制御パネルのモード
+
+制御パネル右上から表示モードを選択できます。
+
+#### かんたんモード
+
+初期表示です。操作を次の3段階に絞っています。
+
+1. `VS Codeで術式を作る・編集`
+2. 必要に応じて保存済み術式を選択
+3. 選択した術式をCoreで使用
+
+保存済み術式をCoreで使用する場合は自動的に`LATEST`を選びます。
+
+#### アドバンスドモード
+
+次の管理機能を表示します。
+
+- `PINNED` / `LATEST`切替
+- 設定保存
+- 紐付け解除
+- プログラム検証
+- 実行ログ
+- シミュレーション
+- VS Codeかんたん編集
+- 状態再読込
+
+### 18.6 Mod内ArcSysコードエディター
+
+Mod内エディターは、VS Codeを起動せずに単一ファイルのArcSys術式を作成する画面です。
+
+| 操作 | 動作 |
+|---|---|
+| `新規` | Core固有名を使用した最小テンプレートを作成 |
+| `保存済みを開く` | 自分が所有する保存済み術式を順に読み込む |
+| `下書き保存` | 現在のコードを端末内へ一時保存 |
+| `検証` / `Ctrl+Enter` | Paper側で構文・型・Capability・必要条件を検証 |
+| `保存・反映` / `Ctrl+S` | PaperへDeployし、成功後にCoreへ`LATEST`で紐付け |
+| `閉じる` | 未Deployの編集内容を一時保存して回路画面へ戻る |
+
+編集ショートカット:
+
+| キー | 動作 |
+|---|---|
+| `Tab` | 2スペース字下げ。複数行選択時は一括字下げ |
+| `Shift+Tab` | 現在行または選択行の字下げ解除 |
+| `Enter` | 現在行の字下げを引き継ぐ。`{}`内では1段深くする |
+| `{` / `(` / `[` | 対応する閉じ括弧を自動補完 |
+| `Ctrl+Z` / `Ctrl+Y` | 最大100段階の元に戻す／やり直し |
+| `Ctrl+F` | コード内検索。Enterで次の一致へ移動 |
+| `Ctrl+/` | 現在行の`//`コメントを切替 |
+| `Ctrl+Shift+S` | 手動で一時保存 |
+
+画面下部にはCore状態、カーソルの行・列、総行数、文字数、下書き状態、Paper診断が表示されます。
+
+#### 自動一時保存と復元
+
+- 最後の入力から1.5秒後に端末内へ自動保存します。
+- 画面を閉じる際も、未Deployの内容を保存します。
+- Minecraftが異常終了しても、同じ回路・同じCoreを開くと復元します。
+- 下書きはプレイヤーのクライアント端末だけに存在し、Paper上の正式Revisionではありません。
+- PaperへのDeployとCore紐付けが両方成功した時だけ下書きを削除します。
+- 下書きが復元された場合、サーバー版を開き直すまで復元内容を優先して表示します。
+
+Mod内エディターは単一ファイル向けです。複数module、LSP補完、Hover、プロファイル、サーバーデバッガーを中心に使う場合はVS Codeを利用してください。
+
+### 18.7 コマンドで紐付ける
 
 ```text
 /msf arc core list
@@ -1070,7 +1166,7 @@ Coreは回路内に置くだけでは実行されません。Triggerから`EXEC`
 /msf arc core unbind <circuitId> <nodeId>
 ```
 
-### 18.6 戻り値から出力ポートへ
+### 18.8 戻り値から出力ポートへ
 
 ```arc
 return true;       // boolean_out
@@ -1080,7 +1176,7 @@ return entity_in;  // entity_out
 
 Map形式で`entity_out`、`number_out`、`boolean_out`を返すこともできます。`Some`と`Ok`は出力変換時に中身が取り出されます。
 
-### 18.7 Coreの停止理由
+### 18.9 Coreの停止理由
 
 | Code | 内容 |
 |---|---|
@@ -1102,6 +1198,8 @@ Map形式で`entity_out`、`number_out`、`boolean_out`を返すこともでき�
 
 | コマンド | 内容 |
 |---|---|
+| `ArcSys: かんたんスタート` | クリップボードの6桁コードを読み、接続から初回Deployまで案内 |
+| `ArcSys: テンプレートから魔術を作る` | 安全なスターターテンプレートを作成 |
 | `ArcSys: Connect to Minecraft` | 6桁コードで接続 |
 | `ArcSys: Open Spell from Minecraft` | 保存済み術式を開く |
 | `ArcSys: Compile Current Spell` | Paperでコンパイル |
@@ -1133,7 +1231,20 @@ Map形式で`entity_out`、`number_out`、`boolean_out`を返すこともでき�
 - 通常Auto DeployはCoreを自動で紐付けません。
 - Core専用編集セッションだけは、設定に関係なく保存時Deploy＋`LATEST`紐付けを行います。
 
-### 19.3 LSP機能
+### 19.3 かんたんスタート
+
+alpha.11以降は次の流れで初回Deployできます。
+
+1. Minecraftで`VS Code接続`またはCoreの`VS Codeで編集`を押します。
+2. 6桁コードがクリップボードへ自動コピーされます。
+3. VS Codeで`ArcSys: かんたんスタート`を実行します。
+4. テンプレート、保存済み術式、現在の`.arc`から開始方法を選びます。
+5. テンプレートは即座にPaperへ検証・Deployされます。
+6. Auto Deployが有効になり、以後は`Ctrl+S`で更新できます。
+
+Core専用編集の場合は、保存成功後に対象Coreへ自動的に`LATEST`で紐付けます。通常接続のAuto DeployはCoreを自動選択しません。
+
+### 19.4 LSP機能
 
 - ArcSysシンタックスハイライト
 - キーワード・標準API補完
@@ -1144,7 +1255,7 @@ Map形式で`entity_out`、`number_out`、`boolean_out`を返すこともでき�
 
 重要: LSP診断は軽量な編集支援です。最終判定はPaperのCompilerです。
 
-### 19.4 ArcSys Studio
+### 19.5 ArcSys Studio
 
 サイドバーに次を表示します。
 
@@ -1155,7 +1266,7 @@ Map形式で`entity_out`、`number_out`、`boolean_out`を返すこともでき�
 - 使用可能APIとMP/Capability
 - Deploy履歴
 
-### 19.5 Revision競合
+### 19.6 Revision競合
 
 同じ術式を複数画面で編集すると、`baseRevision`が古い側は`REVISION_CONFLICT`で拒否されます。Minecraftから最新版を開き直し、変更を統合して再Deployしてください。
 
@@ -1166,6 +1277,11 @@ Map形式で`entity_out`、`number_out`、`boolean_out`を返すこともでき�
 ### 20.1 Fabric Mod
 
 - ノード回路GUI
+- ARCSYS_COREのかんたん／アドバンスド制御パネル
+- Mod内ArcSysコードエディター
+- コードの自動字下げ、括弧補完、検索、Undo/Redo、行コメント
+- 未Deployコードの自動一時保存と復元
+- Paper検証・Deploy・Core自動紐付け
 - `.arc出力`と`.arc読込`
 - Core制御パネル
 - VS Code Bridge開始
@@ -1541,7 +1657,7 @@ spell ModuleAttack {
 
 ### 26.2 `.arc`を読み込めない
 
-1. PaperとFabricがalpha.9以上で同じ版か確認します。
+1. PaperとFabricがalpha.12以上で同じ版か確認します。
 2. 拡張子が`.arc`か確認します。
 3. 通常ArcSysなら23KB以内か確認します。
 4. 複数moduleなら単体Mod読込ではなくVS Code Bridgeを使います。
@@ -1594,6 +1710,23 @@ spell ModuleAttack {
 - `PINNED`なら新Revisionへ自動移行しません。
 - 自動追従させたい場合は`LATEST`を使います。
 - Core専用VS Code編集では対象文書だけを保存します。
+
+### 26.8 Mod内エディターの下書きが復元されない
+
+- PaperとFabricが同じalpha.12以上か確認します。
+- 同じ回路・同じARCSYS_COREを開いているか確認します。下書きはCore単位です。
+- コードが空、または保存上限を超えていないか確認します。
+- 画面下部の下書き状態が`下書き保存失敗`になっていないか確認します。
+- DeployとCore紐付けが成功した下書きは、正式Revisionへ移行したため自動削除されます。
+
+### 26.9 Mod内エディターから保存できない
+
+1. `Ctrl+Enter`でPaper診断を表示します。
+2. 画面下部の行・列と診断コードを確認します。
+3. `REVISION_CONFLICT`の場合は保存済み術式を開き直し、変更を統合します。
+4. `REQUIREMENT`の場合は必要な欠片または権限を確認します。
+5. Coreの回路が保存済みで、同じプレイヤーが所有しているか確認します。
+6. 失敗時も端末内の下書きは残るため、コードを消さずに修正できます。
 
 ---
 
@@ -1653,11 +1786,12 @@ arcsys:
 
 ## 28. 現在の制限事項
 
-alpha.9で未完成または簡略化されている主な項目です。
+alpha.12で未完成または簡略化されている主な項目です。
 
 - 構文として存在する全イベントのPaper自動起動
 - 通常ArcSysコードと任意の既存ノード回路の完全相互変換
 - VS Code上の完全なグラフィカルノード編集
+- Mod内コードエディターのシンタックス色分け、LSP補完、複数module編集
 - `trait`、`impl`、汎用type aliasの完全な意味解析
 - `atomic` / `transaction`による、すでに適用済みBukkit効果の完全rollback
 - `spell.cast`、`spell.effect`、`virtual_structure.show`、`items.inspect`、`event.cancel`の実戦ホスト
