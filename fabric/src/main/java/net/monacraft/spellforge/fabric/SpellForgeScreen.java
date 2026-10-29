@@ -113,6 +113,7 @@ public final class SpellForgeScreen extends Screen {
     private ContextMenu contextMenu;
     private UUID pendingVsCodeCore;
     private UUID pendingCoreConfiguration;
+    private UUID pendingModEditorCore;
     private UUID pendingArcFileImport;
 
     SpellForgeScreen(Screen parent, Circuit circuit, String token) {
@@ -170,6 +171,7 @@ public final class SpellForgeScreen extends Screen {
                     if (response.has("saved") && !response.get("saved").getAsBoolean()) {
                         pendingVsCodeCore = null;
                         pendingCoreConfiguration = null;
+                        pendingModEditorCore = null;
                         setError("保存できませんでした: " + readableError(response.has("message")
                                 ? response.get("message").getAsString() : "SERVER_REJECTED"));
                         return;
@@ -187,6 +189,12 @@ public final class SpellForgeScreen extends Screen {
                     UUID targetNode = pendingCoreConfiguration;
                     pendingCoreConfiguration = null;
                     minecraft.setScreen(new ArcCoreScreen(this, token, circuit.circuitId(), targetNode));
+                    return;
+                }
+                if (pendingModEditorCore != null) {
+                    UUID targetNode = pendingModEditorCore;
+                    pendingModEditorCore = null;
+                    minecraft.setScreen(new ArcCodeEditorScreen(this, token, circuit.circuitId(), targetNode));
                     return;
                 }
                 if (pendingVsCodeCore != null) {
@@ -703,7 +711,7 @@ public final class SpellForgeScreen extends Screen {
         CircuitNode contextNode = menu.nodeId == null ? null : node(menu.nodeId);
         List<String> labels = menu.nodeId == null ? List.of("ノードを追加")
                 : contextNode != null && contextNode.fragmentId().equals("ARCSYS_CORE")
-                ? List.of("VS Codeで編集", "ArcSys制御パネル", "ノードを複製", "ノードをしまう", "ノードを追加")
+                ? List.of("Mod内でコード編集", "VS Codeで編集", "ArcSys制御パネル", "ノードを複製", "ノードをしまう", "ノードを追加")
                 : List.of("ノードを複製", "ノードをしまう", "ノードを追加");
         int menuWidth = 156;
         int menuHeight = labels.size() * 22 + 6;
@@ -964,7 +972,7 @@ public final class SpellForgeScreen extends Screen {
         CircuitNode contextNode = menu.nodeId == null ? null : node(menu.nodeId);
         List<ContextAction> actions = menu.nodeId == null ? List.of(ContextAction.SEARCH)
                 : contextNode != null && contextNode.fragmentId().equals("ARCSYS_CORE")
-                ? List.of(ContextAction.EDIT_CORE_VSCODE, ContextAction.CONFIGURE_CORE, ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH)
+                ? List.of(ContextAction.EDIT_CORE_IN_MOD, ContextAction.EDIT_CORE_VSCODE, ContextAction.CONFIGURE_CORE, ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH)
                 : List.of(ContextAction.DUPLICATE, ContextAction.STOW, ContextAction.SEARCH);
         int width = 156;
         int x = Math.min(menu.x, this.width - width - 4);
@@ -984,6 +992,7 @@ public final class SpellForgeScreen extends Screen {
             case DUPLICATE -> duplicateNode(menu.nodeId);
             case CONFIGURE_CORE -> openCoreConfiguration(menu.nodeId);
             case EDIT_CORE_VSCODE -> openCoreInVsCode(menu.nodeId);
+            case EDIT_CORE_IN_MOD -> openCoreInMod(menu.nodeId);
         }
         return true;
     }
@@ -996,6 +1005,17 @@ public final class SpellForgeScreen extends Screen {
         pendingVsCodeCore = nodeId;
         send(SpellForgeProtocol.Type.SAVE_REQ);
         status = Component.literal("回路を保存してVS Code接続を準備しています…");
+        statusColor = STATUS_WARNING;
+    }
+
+    private void openCoreInMod(UUID nodeId) {
+        if (nodeId == null || node(nodeId) == null) {
+            setError("術式演算核が見つかりません");
+            return;
+        }
+        pendingModEditorCore = nodeId;
+        send(SpellForgeProtocol.Type.SAVE_REQ);
+        status = Component.literal("回路を保存してMod内エディターを開いています…");
         statusColor = STATUS_WARNING;
     }
 
@@ -1461,7 +1481,7 @@ public final class SpellForgeScreen extends Screen {
     @Override
     public boolean isPauseScreen() { return false; }
 
-    private enum ContextAction { EDIT_CORE_VSCODE, CONFIGURE_CORE, DUPLICATE, STOW, SEARCH }
+    private enum ContextAction { EDIT_CORE_IN_MOD, EDIT_CORE_VSCODE, CONFIGURE_CORE, DUPLICATE, STOW, SEARCH }
     private enum CategoryTab {
         ALL("全部", null), TRIGGER("発動", Category.TRIGGER), ELEMENT("属性", Category.ELEMENT),
         SHAPE("形状", Category.SHAPE), TARGET("対象", Category.TARGET), MODIFIER("補助", Category.MODIFIER),

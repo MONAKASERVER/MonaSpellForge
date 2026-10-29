@@ -36,6 +36,7 @@ public final class MonaSpellForgeClient implements ClientModInitializer {
                 client.setScreen(new SpellLibraryScreen(parent,library,frame.sessionToken()));
             }else if(client.screen instanceof SpellForgeScreen screen)screen.accept(frame);
             else if(client.screen instanceof ArcCoreScreen screen)screen.accept(frame);
+            else if(client.screen instanceof ArcCodeEditorScreen screen)screen.accept(frame);
             else if(client.screen instanceof SpellLibraryScreen screen)screen.accept(frame);
         }catch(Exception ignored){}
     }

@@ -47,6 +47,17 @@ Right-click an `ARCSYS_CORE` in the Fabric circuit editor and select `VS Codeで
 
 The ARCSYS_CORE control panel opens in **かんたんモード** by default. It presents the workflow as three numbered actions: open VS Code editing, select an existing spell when needed, and use the selected spell on the Core. The mode selectors in the upper-right switch to **アドバンスド**, which preserves revision pinning, unbind, validation, logs and simulation controls.
 
+## Mod内コードエディター
+
+Fabricの回路画面でARCSYS_COREを右クリックし、**Mod内でコード編集**を選ぶと、VS Codeを使わずにArcSysソースを編集できます。既存のCore紐付けがある場合は現在のソースを読み込み、未設定の場合は安全な最小テンプレートを開きます。
+
+- `Ctrl+Enter`: Paper側でコードを検証
+- `Ctrl+S`: Paper側で検証・Deployし、成功後に対象Coreへ`LATEST`で紐付け
+- `新規`: 新しい最小テンプレートを開始
+- `保存済みを開く`: 自分の保存済み術式を読み込む
+
+検証・Deploy・所有権・Capability・欠片要件はVS Code経路と同じくPaper側で再確認されます。
+
 Core-scoped automatic deployment applies only to the document opened by this explicit editing session. Ordinary `.arc` files and normal VS Code connections require the manual deploy command by default, unless the optional setting below is enabled.
 
 ## Optional Auto Deploy on Save
